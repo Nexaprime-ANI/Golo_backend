@@ -4,7 +4,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import configuration from './config/configuration';
 import { KafkaModule } from './kafka/kafka.module';
 import { AdsModule } from './ads/ads.module';
-import { UsersModule } from './Users/users.module';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -14,7 +14,7 @@ import { UsersModule } from './Users/users.module';
       load: [configuration],
       envFilePath: '.env',
     }),
-    
+
     // MongoDB Connection
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
@@ -36,11 +36,11 @@ import { UsersModule } from './Users/users.module';
       },
       inject: [ConfigService],
     }),
-    
+
     // Feature Modules - order doesn't matter with forwardRef
     KafkaModule,
     AdsModule,
     UsersModule,
   ],
 })
-export class AppModule {}
+export class AppModule { }
