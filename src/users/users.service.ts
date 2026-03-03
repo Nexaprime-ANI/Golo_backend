@@ -180,10 +180,23 @@ export class UsersService {
   async updateProfile(userId: string, updateData: any): Promise<UserResponseDto> {
     this.logger.log(`Updating profile for user: ${userId}`);
     
-    // Only allow updating specific profile fields
+    // Check if email is being changed and if it's already taken
+    if (updateData.email) {
+      const existingUser = await this.userModel.findOne({ 
+        email: updateData.email,
+        _id: { $ne: userId }
+      }).exec();
+      
+      if (existingUser) {
+        throw new ConflictException('Email is already in use');
+      }
+    }
+    
+    // Only allow updating specific fields
     const allowedUpdates: any = {};
     
     if (updateData.name) allowedUpdates.name = updateData.name;
+    if (updateData.email) allowedUpdates.email = updateData.email;
     if (updateData.profile?.phone) allowedUpdates['profile.phone'] = updateData.profile.phone;
     if (updateData.profile?.address) allowedUpdates['profile.address'] = updateData.profile.address;
     if (updateData.profile?.city) allowedUpdates['profile.city'] = updateData.profile.city;
