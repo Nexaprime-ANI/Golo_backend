@@ -385,18 +385,20 @@ export class UsersService {
 
   async sendPasswordChangeOTP(userId: string): Promise<any> {
     this.logger.log(`Sending password change OTP for user: ${userId}`);
-    this.logger.debug(`Received userId: ${userId} (length: ${userId?.length})`);
     
     try {
-      // Validate userId format
-      if (!userId || typeof userId !== 'string') {
-        throw new BadRequestException('Invalid user ID');
+      // Validate userId - handle both string and ObjectId
+      if (!userId) {
+        throw new BadRequestException('User ID is required');
       }
+      
+      const userIdStr = userId.toString();
+      this.logger.debug(`Processing userId: ${userIdStr}`);
 
       // Get full user document with all fields
-      const user = await this.userModel.findById(userId).exec();
+      const user = await this.userModel.findById(userIdStr).exec();
       if (!user) {
-        this.logger.warn(`User not found with ID: ${userId}`);
+        this.logger.warn(`User not found with ID: ${userIdStr}`);
         throw new NotFoundException('User not found');
       }
       
@@ -412,7 +414,7 @@ export class UsersService {
 
       // Save OTP and reset verification status
       await this.userModel.findByIdAndUpdate(
-        userId,
+        userIdStr,
         {
           $set: {
             passwordChangeOTP: otp,
