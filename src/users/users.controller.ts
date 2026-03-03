@@ -81,6 +81,41 @@ export class UsersController {
     };
   }
 
+  // ==================== PASSWORD CHANGE with OTP ====================
+
+  @Post('send-password-otp')
+  @UseGuards(JwtAuthGuard)
+  async sendPasswordChangeOTP(@CurrentUser() user: any) {
+    const result = await this.usersService.sendPasswordChangeOTP(user.id);
+    return {
+      success: true,
+      message: 'OTP sent to your registered phone number',
+      data: result,
+    };
+  }
+
+  @Post('verify-password-otp')
+  @UseGuards(JwtAuthGuard)
+  async verifyPasswordChangeOTP(@CurrentUser() user: any, @Body() body: any) {
+    const result = await this.usersService.verifyPasswordChangeOTP(user.id, body.otp);
+    return {
+      success: true,
+      message: 'OTP verified successfully',
+      data: result,
+    };
+  }
+
+  @Post('change-password-otp')
+  @UseGuards(JwtAuthGuard)
+  async changePasswordWithOTP(@CurrentUser() user: any, @Body() body: any) {
+    const result = await this.usersService.changePasswordWithOTP(user.id, body.otp, body.newPassword);
+    return {
+      success: true,
+      message: 'Password changed successfully',
+      data: result,
+    };
+  }
+
   @Get('all')
   @UseGuards(JwtAuthGuard)
   async getAllUsers(

@@ -360,6 +360,124 @@ export class UsersService {
     };
   }
 
+  // ==================== PASSWORD CHANGE with OTP ====================
+
+  private generateOTP(): string {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+  }
+
+  async sendPasswordChangeOTP(userId: string): Promise<any> {
+    this.logger.log(`Sending password change OTP for user: ${userId}`);
+    
+    const user = await this.findById(userId);
+    if (!user.profile?.phone) {
+      throw new BadRequestException('Phone number not found in profile');
+    }
+
+    const otp = this.generateOTP();
+    const expiryTime = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+
+    // Save OTP and reset verification status
+    await this.userModel.findByIdAndUpdate(
+      userId,
+      {
+        $set: {
+          passwordChangeOTP: otp,
+          passwordChangeOTPExpiry: expiryTime,
+          passwordChangeOTPVerified: false,
+          updatedAt: new Date(),
+        }
+      },
+      { new: true }
+    ).exec();
+
+    // TODO: In production, integrate with SMS service to send OTP to phone
+    this.logger.log(`OTP for ${user.email}: ${otp} (expires in 5 minutes)`);
+    console.log(`[DEBUG] OTP ${otp} sent to ${user.profile.phone}`);
+
+    return {
+      message: 'OTP sent to registered phone number',
+      expiresIn: 300, // 5 minutes in seconds
+    };
+  }
+
+  async verifyPasswordChangeOTP(userId: string, otp: string): Promise<any> {
+    this.logger.log(`Verifying password change OTP for user: ${userId}`);
+    
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (!user.passwordChangeOTP) {
+      throw new BadRequestException('No OTP found. Please request a new one.');
+    }
+
+    if (new Date() > user.passwordChangeOTPExpiry) {
+      throw new BadRequestException('OTP has expired. Please request a new one.');
+    }
+
+    if (user.passwordChangeOTP !== otp) {
+      throw new UnauthorizedException('Invalid OTP');
+    }
+
+    // Mark OTP as verified
+    await this.userModel.findByIdAndUpdate(
+      userId,
+      {
+        $set: {
+          passwordChangeOTPVerified: true,
+          updatedAt: new Date(),
+        }
+      }
+    ).exec();
+
+    return { message: 'OTP verified successfully' };
+  }
+
+  async changePasswordWithOTP(userId: string, otp: string, newPassword: string): Promise<UserResponseDto> {
+    this.logger.log(`Changing password with OTP for user: ${userId}`);
+    
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (!user.passwordChangeOTPVerified) {
+      throw new BadRequestException('OTP not verified. Please verify OTP first.');
+    }
+
+    if (user.passwordChangeOTP !== otp) {
+      throw new UnauthorizedException('OTP mismatch');
+    }
+
+    if (new Date() > user.passwordChangeOTPExpiry) {
+      throw new BadRequestException('OTP has expired. Please request a new one.');
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update password and clear OTP
+    const updatedUser = await this.userModel.findByIdAndUpdate(
+      userId,
+      {
+        $set: {
+          password: hashedPassword,
+          passwordChangeOTP: null,
+          passwordChangeOTPExpiry: null,
+          passwordChangeOTPVerified: false,
+          updatedAt: new Date(),
+        }
+      },
+      { new: true }
+    ).exec();
+
+    this.logger.log(`Password changed successfully for user: ${userId}`);
+
+    return this.toResponseDto(updatedUser);
+  }
+
   // ==================== HELPER METHODS ====================
 
   private toResponseDto(user: UserDocument): UserResponseDto {

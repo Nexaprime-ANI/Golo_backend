@@ -57,6 +57,15 @@ export class User {
   };
 
   @Prop()
+  passwordChangeOTP?: string;
+
+  @Prop()
+  passwordChangeOTPExpiry?: Date;
+
+  @Prop({ default: false })
+  passwordChangeOTPVerified?: boolean;
+
+  @Prop()
   createdAt: Date;
 
   @Prop()
