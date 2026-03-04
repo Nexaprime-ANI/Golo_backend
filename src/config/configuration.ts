@@ -51,4 +51,13 @@ kafka: {
     expiresIn: process.env.JWT_EXPIRATION || '15m',
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRATION || '7d',
   },
+
+  payment: {
+    provider: process.env.PAYMENT_PROVIDER || 'razorpay',
+    razorpay: {
+      keyId: process.env.RAZORPAY_KEY_ID,
+      keySecret: process.env.RAZORPAY_KEY_SECRET,
+      webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
+    },
+  },
 }));

@@ -1,7 +1,7 @@
 # Backend Deploy Guide (Railway)
 
 This service is a NestJS app that runs:
-- HTTP API (`/users`, `/ads`)
+- HTTP API (`/users`, `/ads`, `/payments`)
 - Kafka microservice handlers (`@MessagePattern`)
 - MongoDB via Mongoose
 
@@ -32,6 +32,11 @@ JWT_SECRET=...
 JWT_REFRESH_SECRET=...
 JWT_EXPIRATION=15m
 JWT_REFRESH_EXPIRATION=7d
+
+PAYMENT_PROVIDER=razorpay
+RAZORPAY_KEY_ID=rzp_live_xxxxx
+RAZORPAY_KEY_SECRET=xxxxxx
+RAZORPAY_WEBHOOK_SECRET=whsec_xxxxx
 ```
 
 Notes:
@@ -63,6 +68,9 @@ Also make sure backend `CORS_ORIGINS` includes your frontend origin.
 4. Confirm healthcheck endpoint returns 200:
    - `GET /ads/health/status`
 5. Confirm login/register flow works from frontend.
+6. Confirm Razorpay keys are set for the correct mode (test/live).
+7. Add webhook URL in Razorpay Dashboard:
+  - `https://<your-backend-domain>/payments/webhook`
 
 ## 6) Quick Smoke Tests
 
@@ -72,6 +80,8 @@ After deploy:
 2. `POST /users/register`
 3. `POST /users/login`
 4. `GET /ads`
+5. `POST /payments/create-order` with JWT
+6. `POST /payments/verify` with JWT
 
 If Kafka enabled, also test:
 

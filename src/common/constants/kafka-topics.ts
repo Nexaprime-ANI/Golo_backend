@@ -36,4 +36,11 @@ export const KAFKA_TOPICS = {
   USER_ADS_FETCHED: 'user.ads.fetched',
   USER_ADS_CREATED: 'user.ads.created',
 
+  // Payment Events
+  PAYMENT_CREATED: 'payment.created',
+  PAYMENT_SUCCEEDED: 'payment.succeeded',
+  PAYMENT_FAILED: 'payment.failed',
+  PAYMENT_REFUNDED: 'payment.refunded',
+  PAYMENT_WEBHOOK_PROCESSED: 'payment.webhook.processed',
+
 };
