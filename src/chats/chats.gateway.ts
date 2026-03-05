@@ -104,7 +104,7 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 	@SubscribeMessage('send_message')
 	async sendMessage(
 		@ConnectedSocket() client: Socket,
-		@MessageBody() payload: { conversationId: string; text: string },
+		@MessageBody() payload: { conversationId: string; text: string; adId?: string },
 	) {
 		try {
 			const userId = client.data.userId as string;
@@ -114,10 +114,26 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
 			const message = await this.chatsService.sendMessage(userId, payload.conversationId, {
 				text: payload.text,
+				adId: payload.adId,
 			});
 
 			const room = `conversation:${payload.conversationId}`;
 			this.server.to(room).emit('new_message', message);
+
+			const participants = Array.isArray((message as any).participants)
+				? (message as any).participants
+				: [];
+
+			for (const participantId of participants) {
+				this.server.to(`user:${participantId}`).emit('conversation_updated', {
+					conversationId: payload.conversationId,
+					lastMessageText: message.text,
+					lastMessageAt: message.createdAt,
+					lastMessageAdId: message.adId,
+					lastMessageAdTitle: message.adTitle || null,
+					message,
+				});
+			}
 
 			return {
 				success: true,

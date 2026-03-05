@@ -5,8 +5,11 @@ export type ConversationDocument = Conversation & Document;
 
 @Schema({ timestamps: true, collection: 'conversations' })
 export class Conversation {
-  @Prop({ required: true })
-  adId: string;
+  @Prop()
+  adId?: string;
+
+  @Prop()
+  adTitle?: string;
 
   @Prop({ type: [String], required: true })
   participants: string[];
@@ -16,6 +19,12 @@ export class Conversation {
 
   @Prop()
   lastMessageText?: string;
+
+  @Prop()
+  lastMessageAdId?: string;
+
+  @Prop()
+  lastMessageAdTitle?: string;
 
   @Prop({ default: Date.now })
   lastMessageAt: Date;
@@ -33,4 +42,4 @@ export class Conversation {
 export const ConversationSchema = SchemaFactory.createForClass(Conversation);
 
 ConversationSchema.index({ participants: 1, lastMessageAt: -1 });
-ConversationSchema.index({ adId: 1, participantKey: 1 }, { unique: true });
+ConversationSchema.index({ participantKey: 1 }, { unique: true });

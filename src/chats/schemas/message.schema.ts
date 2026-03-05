@@ -11,6 +11,9 @@ export class Message {
   @Prop({ required: true })
   adId: string;
 
+  @Prop()
+  adTitle?: string;
+
   @Prop({ required: true })
   senderId: string;
 

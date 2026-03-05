@@ -33,12 +33,17 @@ export class ChatsService {
     return [String(userA), String(userB)].sort().join('|');
   }
 
-  async startConversation(currentUserId: string, dto: StartConversationDto) {
-    const ad = await this.adModel
+  private async findAdByAnyId(adId: string) {
+    if (!adId) return null;
+    return this.adModel
       .findOne({
-        $or: [{ adId: dto.adId }, { _id: Types.ObjectId.isValid(dto.adId) ? dto.adId : null }],
+        $or: [{ adId }, { _id: Types.ObjectId.isValid(adId) ? adId : null }],
       })
       .exec();
+  }
+
+  async startConversation(currentUserId: string, dto: StartConversationDto) {
+    const ad = await this.findAdByAnyId(dto.adId);
 
     if (!ad) {
       throw new NotFoundException('Ad not found');
@@ -57,17 +62,22 @@ export class ChatsService {
     const participantKey = this.getParticipantKey(currentUserId, sellerId);
 
     let conversation = await this.conversationModel
-      .findOne({ adId: ad.adId || this.toConversationId(ad._id), participantKey })
+      .findOne({ participantKey })
       .exec();
 
     if (!conversation) {
       conversation = await this.conversationModel.create({
         adId: ad.adId || this.toConversationId(ad._id),
+        adTitle: ad.title,
         participants: [String(currentUserId), String(sellerId)],
         participantKey,
         lastMessageAt: new Date(),
         messagesCount: 0,
       });
+    } else {
+      conversation.adId = ad.adId || this.toConversationId(ad._id);
+      conversation.adTitle = ad.title;
+      await conversation.save();
     }
 
     return this.enrichConversationForUser(conversation, currentUserId, ad);
@@ -106,6 +116,7 @@ export class ChatsService {
       return {
         id: this.toConversationId(conversation._id),
         adId: conversation.adId,
+        adTitle: conversation.adTitle || ad?.title || null,
         participants: conversation.participants,
         otherUser: otherUser
           ? {
@@ -125,6 +136,8 @@ export class ChatsService {
             }
           : null,
         lastMessageText: conversation.lastMessageText || '',
+        lastMessageAdId: conversation.lastMessageAdId || conversation.adId || null,
+        lastMessageAdTitle: conversation.lastMessageAdTitle || conversation.adTitle || ad?.title || null,
         lastMessageAt: conversation.lastMessageAt,
         messagesCount: conversation.messagesCount || 0,
         createdAt: conversation.createdAt,
@@ -164,6 +177,7 @@ export class ChatsService {
           id: this.toConversationId(message._id),
           conversationId: message.conversationId,
           adId: message.adId,
+          adTitle: message.adTitle || null,
           senderId: message.senderId,
           sender: senderMap.get(message.senderId)
             ? {
@@ -194,15 +208,25 @@ export class ChatsService {
       throw new BadRequestException('Message text is required');
     }
 
+    const adContextId = dto.adId || conversation.adId;
+    const adContext = adContextId ? await this.findAdByAnyId(adContextId) : null;
+    const resolvedAdId = adContext ? adContext.adId || this.toConversationId(adContext._id) : conversation.adId;
+    const resolvedAdTitle = adContext?.title || conversation.adTitle || null;
+
     const message = await this.messageModel.create({
       conversationId: this.toConversationId(conversation._id),
-      adId: conversation.adId,
+      adId: resolvedAdId,
+      adTitle: resolvedAdTitle,
       senderId: String(userId),
       text,
       readBy: [String(userId)],
     });
 
+    conversation.adId = resolvedAdId;
+    conversation.adTitle = resolvedAdTitle;
     conversation.lastMessageText = text;
+    conversation.lastMessageAdId = resolvedAdId;
+    conversation.lastMessageAdTitle = resolvedAdTitle;
     conversation.lastMessageAt = new Date();
     conversation.messagesCount = (conversation.messagesCount || 0) + 1;
     await conversation.save();
@@ -213,6 +237,7 @@ export class ChatsService {
       id: this.toConversationId(message._id),
       conversationId: message.conversationId,
       adId: message.adId,
+      adTitle: message.adTitle || null,
       senderId: message.senderId,
       sender: sender
         ? {
@@ -223,6 +248,7 @@ export class ChatsService {
         : null,
       text: message.text,
       readBy: message.readBy || [],
+      participants: conversation.participants,
       createdAt: message.createdAt,
       updatedAt: message.updatedAt,
     };
@@ -256,6 +282,7 @@ export class ChatsService {
     return {
       id: this.toConversationId(conversation._id),
       adId: conversation.adId,
+      adTitle: conversation.adTitle || ad?.title || null,
       participants: conversation.participants,
       otherUser: otherUser
         ? {
@@ -275,6 +302,8 @@ export class ChatsService {
           }
         : null,
       lastMessageText: conversation.lastMessageText || '',
+      lastMessageAdId: conversation.lastMessageAdId || conversation.adId || null,
+      lastMessageAdTitle: conversation.lastMessageAdTitle || conversation.adTitle || ad?.title || null,
       lastMessageAt: conversation.lastMessageAt,
       messagesCount: conversation.messagesCount || 0,
       createdAt: conversation.createdAt,
