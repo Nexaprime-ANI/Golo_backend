@@ -15,6 +15,8 @@ import { ListCallsDto } from './dto/list-calls.dto';
 export class CallsService {
   private readonly logger = new Logger(CallsService.name);
   private readonly activeCallTimeouts = new Map<string, NodeJS.Timeout>();
+  private readonly staleRingingMs = 45 * 1000;
+  private readonly staleAcceptedMs = 6 * 60 * 60 * 1000;
 
   constructor(
     @InjectModel(Call.name) private readonly callModel: Model<CallDocument>,
@@ -44,6 +46,8 @@ export class CallsService {
     if (String(callerId) === String(calleeId)) {
       throw new BadRequestException('You cannot call yourself');
     }
+
+    await this.cleanupStaleActiveCallsForUser(String(calleeId));
 
     const busyCall = await this.callModel.findOne({
       participants: String(calleeId),
@@ -77,6 +81,30 @@ export class CallsService {
       busy: false,
       call,
     };
+  }
+
+  private async cleanupStaleActiveCallsForUser(userId: string) {
+    const now = Date.now();
+
+    const activeCalls = await this.callModel
+      .find({
+        participants: String(userId),
+        status: { $in: ['initiated', 'ringing', 'accepted'] },
+      })
+      .exec();
+
+    for (const call of activeCalls) {
+      const ageMs = now - new Date(call.startedAt || call.updatedAt || call.createdAt).getTime();
+
+      if (['initiated', 'ringing'].includes(call.status) && ageMs > this.staleRingingMs) {
+        await this.endCallInternal(call.callId, 'missed', 'timeout');
+        continue;
+      }
+
+      if (call.status === 'accepted' && ageMs > this.staleAcceptedMs) {
+        await this.endCallInternal(call.callId, 'ended', 'network_error');
+      }
+    }
   }
 
   private startMissedCallTimer(callId: string) {
