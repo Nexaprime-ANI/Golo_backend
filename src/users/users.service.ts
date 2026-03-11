@@ -1,4 +1,4 @@
-import { Injectable, ConflictException, UnauthorizedException, NotFoundException, BadRequestException, ForbiddenException, Logger, InternalServerErrorException, Optional } from '@nestjs/common';
+import { Injectable, ConflictException, UnauthorizedException, NotFoundException, BadRequestException, ForbiddenException, Logger, InternalServerErrorException, Optional, forwardRef, Inject } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as bcrypt from 'bcrypt';
@@ -11,6 +11,7 @@ import { KafkaService } from '../kafka/kafka.service';
 import { KAFKA_TOPICS } from '../common/constants/kafka-topics';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
+import { AdsService } from '../ads/ads.service';
 
 @Injectable()
 export class UsersService {
@@ -24,6 +25,7 @@ export class UsersService {
     private jwtService: JwtService,
     private configService: ConfigService,
     @Optional() private kafkaService?: KafkaService,
+    @Optional() @Inject(forwardRef(() => AdsService)) private adsService?: AdsService,
   ) {
     const smtpHost = this.configService.get<string>('SMTP_HOST');
     const smtpPort = Number(this.configService.get<string>('SMTP_PORT') || '587');
@@ -578,6 +580,63 @@ export class UsersService {
     this.logger.log(`Password changed successfully for user: ${userId}`);
 
     return this.toResponseDto(updatedUser);
+  }
+
+  // ==================== WISHLIST METHODS ====================
+
+  async toggleWishlist(userId: string, adId: string): Promise<{ wishlist: string[], added: boolean }> {
+    this.logger.log(`Toggling wishlist for user: ${userId}, ad: ${adId}`);
+    
+    if (!adId) {
+      throw new BadRequestException('Ad ID is required');
+    }
+
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    let wishlist = user.wishlist || [];
+    let added = false;
+
+    if (wishlist.includes(adId)) {
+      wishlist = wishlist.filter(id => id !== adId);
+    } else {
+      wishlist.push(adId);
+      added = true;
+    }
+
+    await this.userModel.findByIdAndUpdate(userId, { wishlist }).exec();
+    return { wishlist, added };
+  }
+
+  async getWishlistIds(userId: string): Promise<string[]> {
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    return user.wishlist || [];
+  }
+
+  async getWishlistAds(userId: string): Promise<any[]> {
+    const ids = await this.getWishlistIds(userId);
+    if (!ids || ids.length === 0) return [];
+
+    if (!this.adsService) {
+      this.logger.error('AdsService not available to fetch wishlist ads');
+      return [];
+    }
+
+    const ads = [];
+    for (const id of ids) {
+      try {
+        const ad = await this.adsService.getAdById(id);
+        if (ad) ads.push(ad);
+      } catch (error) {
+        this.logger.warn(`Ad ${id} not found in wishlist context: ${error.message}`);
+      }
+    }
+    return ads;
   }
 
   // ==================== HELPER METHODS ====================

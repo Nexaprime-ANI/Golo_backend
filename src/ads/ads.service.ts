@@ -375,8 +375,202 @@ export class AdsService {
   }
 
   /* ============================================================
+     ANALYTICS
+  ============================================================ */
+
+  /**
+   * Track a view — views always equals viewHistory.length (unique visitors only).
+   * Refreshing the page never increments views for the same visitor.
+   * visitorId: userId (authenticated) or a browser-generated UUID from localStorage.
+   */
+  async trackViewWithVisitor(adId: string, visitorId: string): Promise<void> {
+    try {
+      // Resolve to UUID adId if a MongoDB _id was passed
+      let resolvedAdId = adId;
+      if (/^[0-9a-fA-F]{24}$/.test(adId)) {
+        const found = await this.adModel.findById(adId).select('adId').lean().exec();
+        if (found?.adId) resolvedAdId = found.adId;
+      }
+
+      // Add visitorId to viewHistory (no-op if already present due to $addToSet)
+      // Then set views = viewHistory.length to keep them perfectly in sync
+      const updated = await this.adModel.findOneAndUpdate(
+        { adId: resolvedAdId },
+        [
+          {
+            $set: {
+              viewHistory: {
+                $cond: {
+                  if: { $in: [visitorId, { $ifNull: ['$viewHistory', []] }] },
+                  then: '$viewHistory',
+                  else: { $concatArrays: [{ $ifNull: ['$viewHistory', []] }, [visitorId]] },
+                },
+              },
+              updatedAt: new Date(),
+            },
+          },
+          {
+            $set: {
+              views: { $size: '$viewHistory' },
+            },
+          },
+        ],
+        { new: true },
+      ).exec();
+
+      if (!updated) {
+        this.logger.warn(`trackViewWithVisitor: ad not found for adId=${resolvedAdId}`);
+      }
+    } catch (error: any) {
+      this.logger.error(`Failed to track view with visitor for ${adId}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Increment contact click count when a user clicks Chat or Call on an ad.
+   */
+  async trackContactClick(adId: string): Promise<void> {
+    try {
+      let updated = await this.adModel.findOneAndUpdate(
+        { adId },
+        { $inc: { contactClicks: 1 }, $set: { updatedAt: new Date() } },
+      ).exec();
+
+      if (!updated && /^[0-9a-fA-F]{24}$/.test(adId)) {
+        await this.adModel.findByIdAndUpdate(
+          adId,
+          { $inc: { contactClicks: 1 }, $set: { updatedAt: new Date() } },
+        ).exec();
+      }
+    } catch (error: any) {
+      this.logger.error(`Failed to track contact click for ${adId}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get analytics summary for all ads posted by a specific user.
+   */
+  async getMyAnalytics(userId: string): Promise<{
+    summary: {
+      totalAds: number;
+      activeAds: number;
+      totalViews: number;
+      uniqueVisitors: number;
+      totalContactClicks: number;
+      promotedAds: number;
+      totalWishlistSaves: number;
+    };
+    ads: any[];
+  }> {
+    const ads = await this.adModel
+      .find({ userId })
+      .select('adId title category status views viewHistory contactClicks isPromoted promotedUntil createdAt price images city')
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+
+    const adIds = ads.map(a => a.adId).filter(Boolean);
+
+    // Count how many users have each ad in their wishlist
+    const wishlistCounts: Record<string, number> = {};
+    if (adIds.length > 0) {
+      const wishlistAgg = await this.userModel.aggregate([
+        { $match: { wishlist: { $in: adIds } } },
+        { $unwind: '$wishlist' },
+        { $match: { wishlist: { $in: adIds } } },
+        { $group: { _id: '$wishlist', count: { $sum: 1 } } },
+      ]).exec();
+      for (const item of wishlistAgg) {
+        wishlistCounts[item._id] = item.count;
+      }
+    }
+
+    const totalAds = ads.length;
+    const activeAds = ads.filter(a => a.status === 'active').length;
+    const promotedAds = ads.filter(a => a.isPromoted && a.promotedUntil && new Date(a.promotedUntil) > new Date()).length;
+    // views = unique visitors only (viewHistory.length is the source of truth)
+    const totalViews = ads.reduce((sum, a) => sum + (a.viewHistory?.length || 0), 0);
+    const uniqueVisitors = totalViews; // same — views IS unique visitors
+    const totalContactClicks = ads.reduce((sum, a) => sum + (a.contactClicks || 0), 0);
+    const totalWishlistSaves = Object.values(wishlistCounts).reduce((sum, c) => sum + c, 0);
+
+    const adsWithAnalytics = ads.map(ad => ({
+      adId: ad.adId,
+      title: ad.title,
+      category: ad.category,
+      status: ad.status,
+      price: ad.price,
+      city: ad.city,
+      image: ad.images?.[0] || null,
+      views: ad.viewHistory?.length || 0,          // unique visitors = views
+      uniqueVisitors: ad.viewHistory?.length || 0, // kept for compatibility
+      contactClicks: ad.contactClicks || 0,
+      wishlistCount: wishlistCounts[ad.adId] || 0,
+      isPromoted: ad.isPromoted || false,
+      promotedUntil: ad.promotedUntil || null,
+      createdAt: ad.createdAt,
+    }));
+
+    return {
+      summary: { totalAds, activeAds, totalViews, uniqueVisitors, totalContactClicks, promotedAds, totalWishlistSaves },
+      ads: adsWithAnalytics,
+    };
+  }
+
+  /**
+   * Count how many users have a specific ad in their wishlist.
+   * The adId stored in User.wishlist is always the UUID adId field.
+   * We resolve it first in case a MongoDB _id is passed.
+   */
+  async getAdWishlistCount(adId: string): Promise<number> {
+    try {
+      // Resolve to UUID adId — needed when URL contains MongoDB _id
+      let resolvedAdId = adId;
+      const ad = await this.adModel
+        .findOne({ adId })
+        .select('adId')
+        .lean()
+        .exec();
+
+      if (!ad && /^[0-9a-fA-F]{24}$/.test(adId)) {
+        // Passed a MongoDB _id — look up the real UUID
+        const adById = await this.adModel
+          .findById(adId)
+          .select('adId')
+          .lean()
+          .exec();
+        if (adById?.adId) resolvedAdId = adById.adId;
+      } else if (ad?.adId) {
+        resolvedAdId = ad.adId;
+      }
+
+      const count = await this.userModel
+        .countDocuments({ wishlist: resolvedAdId })
+        .exec();
+      return count;
+    } catch (error: any) {
+      this.logger.error(`Failed to get wishlist count for ${adId}: ${error.message}`);
+      return 0;
+    }
+  }
+
+  /* ============================================================
      UPDATE / DELETE
   ============================================================ */
+
+  /**
+   * One-time migration: set views = viewHistory.length for every ad.
+   * Fixes all existing ads that have inflated view counts from non-unique tracking.
+   */
+  async resyncViewCounts(): Promise<{ updated: number }> {
+    const result = await (this.adModel as any).updateMany(
+      {},
+      [
+        { $set: { views: { $size: { $ifNull: ['$viewHistory', []] } } } },
+      ],
+    ).exec();
+    return { updated: result.modifiedCount ?? result.nModified ?? 0 };
+  }
 
   async updateAd(
     adId: string,

@@ -34,7 +34,7 @@ import { AdsModule } from 'src/ads/ads.module';
       inject: [ConfigService],
     }),
     KafkaModule, // Keep existing forwardRef
-    // forwardRef(() => AdsModule), 
+    forwardRef(() => AdsModule), 
   ],
   controllers: [UsersController],
   providers: [UsersService, JwtStrategy],

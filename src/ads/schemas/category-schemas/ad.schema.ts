@@ -147,6 +147,12 @@ export class Ad {
   @Prop({ default: 0 })
   views: number;
 
+  @Prop({ default: 0 })
+  contactClicks: number;   // incremented when user clicks Chat/Call on the ad
+
+  @Prop({ type: [String], default: [] })
+  viewHistory: string[];   // stores userId or IP for unique visitor tracking
+
   @Prop({ type: [String] })
   tags: string[];
 

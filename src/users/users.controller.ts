@@ -116,6 +116,33 @@ export class UsersController {
     };
   }
 
+  // ==================== WISHLIST ROUTES ====================
+
+  @Get('wishlist')
+  @UseGuards(JwtAuthGuard)
+  async getWishlistAds(@CurrentUser() user: any) {
+    const data = await this.usersService.getWishlistAds(user.id);
+    return { success: true, data };
+  }
+
+  @Get('wishlist/ids')
+  @UseGuards(JwtAuthGuard)
+  async getWishlistIds(@CurrentUser() user: any) {
+    const data = await this.usersService.getWishlistIds(user.id);
+    return { success: true, data };
+  }
+
+  @Post('wishlist/:adId')
+  @UseGuards(JwtAuthGuard)
+  async toggleWishlist(@CurrentUser() user: any, @Param('adId') adId: string) {
+    const result = await this.usersService.toggleWishlist(user.id, adId);
+    return {
+      success: true,
+      message: result.added ? 'Added to wishlist' : 'Removed from wishlist',
+      data: result,
+    };
+  }
+
   @Get('all')
   @UseGuards(JwtAuthGuard)
   async getAllUsers(

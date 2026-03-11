@@ -420,6 +420,22 @@ export class AdsController {
   }
 
   /**
+   * Get analytics for ads posted by the current user
+   */
+  @Get('analytics/my')
+  @UseGuards(JwtAuthGuard)
+  async getMyAnalytics(@CurrentUser() user: any) {
+    this.logger.log(`REST: Getting analytics for user: ${user.id}`);
+    try {
+      const analytics = await this.adsService.getMyAnalytics(user.id);
+      return { success: true, data: analytics };
+    } catch (error) {
+      this.logger.error(`REST: Error getting analytics: ${error.message}`);
+      return { success: false, message: 'Failed to get analytics' };
+    }
+  }
+
+  /**
    * Get ads by current user
    */
   @Get('user/me')
@@ -769,6 +785,23 @@ async testKafka() {
   }
 
   /**
+   * Admin: Resync all ads' views to viewHistory.length (one-time migration)
+   */
+  @Post('admin/resync-views')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async resyncViewCounts() {
+    this.logger.log('REST: Admin resyncing view counts to unique visitors');
+    try {
+      const result = await this.adsService.resyncViewCounts();
+      return { success: true, message: `Resynced ${result.updated} ads`, data: result };
+    } catch (error) {
+      this.logger.error(`REST: Error resyncing views: ${error.message}`);
+      return { success: false, message: 'Failed to resync view counts' };
+    }
+  }
+
+  /**
    * Admin: Get all ads (including inactive/deleted)
    */
   @Get('admin/all')
@@ -925,15 +958,17 @@ async testKafka() {
   }
 
   @Get('ad-details/:adId')
-  async getAdDetails(@Param('adId') adId: string) {
+  async getAdDetails(@Param('adId') adId: string, @Query('vid') visitorId?: string) {
     this.logger.log(`Fetching ad details for: ${adId}`);
     try {
       const ad = await this.adsService.getAdById(adId);
 
-      // Increment view count
-      await this.adsService.incrementViewCount(adId).catch(e =>
-        this.logger.error(`Error incrementing views: ${e.message}`)
-      );
+      // Track unique view — only counts if visitorId is new
+      if (visitorId) {
+        this.adsService.trackViewWithVisitor(adId, visitorId).catch(e =>
+          this.logger.error(`Error tracking view: ${e.message}`)
+        );
+      }
 
       return { success: true, data: ad };
     } catch (error) {
@@ -943,19 +978,51 @@ async testKafka() {
   }
 
   /**
+   * Track a contact button click (Chat or Call)
+   */
+  @Post(':adId/click')
+  async trackClick(@Param('adId') adId: string) {
+    this.logger.log(`REST: Tracking contact click for ad: ${adId}`);
+    try {
+      await this.adsService.trackContactClick(adId);
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`REST: Error tracking click: ${error.message}`);
+      return { success: false, message: 'Failed to track click' };
+    }
+  }
+
+  /**
+   * Get wishlist save count for a single ad (public)
+   */
+  @Get('wishlist-count/:adId')
+  async getAdWishlistCount(@Param('adId') adId: string) {
+    this.logger.log(`REST: Getting wishlist count for ad: ${adId}`);
+    try {
+      const count = await this.adsService.getAdWishlistCount(adId);
+      return { success: true, data: { adId, wishlistCount: count } };
+    } catch (error) {
+      this.logger.error(`REST: Error getting wishlist count: ${error.message}`);
+      return { success: false, message: 'Failed to get wishlist count' };
+    }
+  }
+
+  /**
    * Keep this dynamic GET route near the bottom so static routes always win.
    */
   @Get(':adId')
-  async getAdById(@Param('adId') adId: string) {
+  async getAdById(@Param('adId') adId: string, @Query('vid') visitorId?: string) {
     this.logger.log(`REST: Getting ad by ID: ${adId}`);
 
     try {
       const ad = await this.adsService.getAdById(adId);
 
-      // Increment view count asynchronously
-      this.adsService.incrementViewCount(adId).catch(error => {
-        this.logger.error(`Error incrementing view count: ${error.message}`);
-      });
+      // Track unique view — only counts if visitorId is new
+      if (visitorId) {
+        this.adsService.trackViewWithVisitor(adId, visitorId).catch(error => {
+          this.logger.error(`Error tracking view: ${error.message}`);
+        });
+      }
 
       return {
         success: true,

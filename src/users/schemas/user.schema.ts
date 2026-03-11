@@ -68,6 +68,9 @@ export class User {
   @Prop({ default: false })
   passwordChangeOTPVerified?: boolean;
 
+  @Prop({ type: [String], default: [] })
+  wishlist: string[];
+
   @Prop()
   createdAt: Date;
 
