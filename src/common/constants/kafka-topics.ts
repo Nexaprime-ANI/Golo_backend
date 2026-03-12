@@ -43,4 +43,9 @@ export const KAFKA_TOPICS = {
   PAYMENT_REFUNDED: 'payment.refunded',
   PAYMENT_WEBHOOK_PROCESSED: 'payment.webhook.processed',
 
+  // Ad Reporting & Moderation
+  AD_REPORT_SUBMITTED: 'ad.report.submitted',
+  AD_AUTO_DISABLED: 'ad.auto.disabled',
+  AD_REVIEW_REQUEST: 'ad.review.request',
+
 };

@@ -192,6 +192,29 @@ export class Ad {
   @Prop()
   rejectionReason: string;
 
+  // ==================== REPORTING & MODERATION ====================
+  
+  @Prop({ default: 0 })
+  reportCount: number;
+
+  @Prop({ default: false })
+  isUnderReview: boolean;
+
+  @Prop({ default: false })
+  autoDisabled: boolean;
+
+  @Prop()
+  disabledAt: Date;
+
+  @Prop()
+  disabledReason: string;
+
+  @Prop()
+  reviewedBy: string;
+
+  @Prop()
+  reviewedAt: Date;
+
   @Prop()
   createdAt: Date;
 

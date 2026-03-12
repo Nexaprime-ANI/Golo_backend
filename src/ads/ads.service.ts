@@ -15,6 +15,7 @@ import { KafkaService } from '../kafka/kafka.service';
 import { KAFKA_TOPICS } from '../common/constants/kafka-topics';
 import { v4 as uuidv4 } from 'uuid';
 import { User, UserDocument } from '../users/schemas/user.schema';
+import { Report, ReportDocument, ReportReason, ReportStatus } from './schemas/report.schema';
 
 @Injectable()
 export class AdsService {
@@ -23,6 +24,7 @@ export class AdsService {
   constructor(
     @InjectModel(Ad.name) private readonly adModel: Model<AdDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @InjectModel(Report.name) private readonly reportModel: Model<ReportDocument>,
 
     // ✅ Kafka OPTIONAL
     @Optional() private readonly kafkaService?: KafkaService,
@@ -677,6 +679,319 @@ export class AdsService {
       },
       correlationId,
     );
+  }
+
+  /* ============================================================
+     REPORTING & MODERATION
+  ============================================================ */
+
+  /**
+   * Submit a report for an ad - auto-disables at 10 reports
+   */
+  async submitReport(
+    adId: string,
+    userId: string,
+    reason: ReportReason,
+    description?: string,
+  ): Promise<{ success: boolean; message: string; reportId: string }> {
+    try {
+      this.logger.log(`User ${userId} reporting ad ${adId} for reason: ${reason}`);
+
+      // Check if ad exists
+      const ad = await this.adModel.findOne({ adId }).exec();
+      if (!ad) {
+        throw new NotFoundException('Ad not found');
+      }
+
+      // Prevent owner from reporting their own ad
+      if (ad.userId === userId) {
+        throw new ForbiddenException('You cannot report your own ad');
+      }
+
+      // Check if user already reported this ad
+      const existingReport = await this.reportModel
+        .findOne({ adId, reportedBy: userId })
+        .exec();
+      
+      if (existingReport) {
+        throw new BadRequestException('You have already reported this ad');
+      }
+
+      // Create report
+      const report = await this.reportModel.create({
+        reportId: uuidv4(),
+        adId,
+        reportedBy: userId,
+        reason,
+        description: description || '',
+        status: ReportStatus.PENDING,
+      });
+
+      // Increment report count on ad
+      const updatedAd = await this.adModel.findOneAndUpdate(
+        { adId },
+        {
+          $inc: { reportCount: 1 },
+          $set: { isUnderReview: true },
+        },
+        { new: true },
+      ).exec();
+
+      // Auto-disable if 10 or more reports
+      if ((updatedAd?.reportCount ?? 0) >= 10) {
+        await this.autoDisableAd(adId, `Auto-disabled: ${updatedAd?.reportCount} reports`);
+      }
+
+      // Emit Kafka event for notifications
+      if (this.kafkaService) {
+        await this.kafkaService.emit(KAFKA_TOPICS.AD_REPORT_SUBMITTED, {
+          reportId: report.reportId,
+          adId,
+          reportedBy: userId,
+          reason,
+          reportCount: updatedAd?.reportCount,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      return {
+        success: true,
+        message: 'Report submitted successfully',
+        reportId: report.reportId,
+      };
+    } catch (error: any) {
+      this.logger.error(`Error submitting report: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Auto-disable ad when it reaches 10 reports
+   */
+  async autoDisableAd(adId: string, reason: string): Promise<void> {
+    try {
+      this.logger.warn(`Auto-disabling ad ${adId}: ${reason}`);
+
+      await this.adModel.findOneAndUpdate(
+        { adId },
+        {
+          $set: {
+            autoDisabled: true,
+            disabledAt: new Date(),
+            disabledReason: reason,
+            status: 'expired', // Mark as expired so it won't show in listings
+          },
+        },
+      ).exec();
+
+      // Get ad owner to notify
+      const ad = await this.adModel.findOne({ adId }).select('userId title').exec();
+      
+      if (ad && this.kafkaService) {
+        await this.kafkaService.emit(KAFKA_TOPICS.AD_AUTO_DISABLED, {
+          adId,
+          userId: ad.userId,
+          adTitle: ad.title,
+          reason,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    } catch (error: any) {
+      this.logger.error(`Error auto-disabling ad: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get all reports for a specific ad (admin only)
+   */
+  async getAdReports(adId: string): Promise<any[]> {
+    try {
+      this.logger.log(`Fetching reports for ad: ${adId}`);
+
+      const reports = await this.reportModel
+        .find({ adId })
+        .sort({ createdAt: -1 })
+        .lean()
+        .exec();
+
+      return reports;
+    } catch (error: any) {
+      this.logger.error(`Error fetching reports: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Get pending reports queue (admin only)
+   */
+  async getPendingReports(): Promise<any[]> {
+    try {
+      this.logger.log('Fetching pending reports queue');
+
+      const reports = await this.reportModel.aggregate([
+        {
+          $match: { status: ReportStatus.PENDING },
+        },
+        {
+          $lookup: {
+            from: 'ads',
+            localField: 'adId',
+            foreignField: 'adId',
+            as: 'ad',
+          },
+        },
+        {
+          $unwind: '$ad',
+        },
+        {
+          $project: {
+            reportId: 1,
+            adId: 1,
+            reportedBy: 1,
+            reason: 1,
+            description: 1,
+            createdAt: 1,
+            'ad.title': 1,
+            'ad.status': 1,
+            'ad.reportCount': 1,
+          },
+        },
+        {
+          $sort: { createdAt: -1 },
+        },
+      ]);
+
+      return reports;
+    } catch (error: any) {
+      this.logger.error(`Error fetching pending reports: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Update report status (admin only)
+   */
+  async updateReportStatus(
+    reportId: string,
+    status: ReportStatus,
+    adminNotes?: string,
+    reviewerId?: string,
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      this.logger.log(`Updating report ${reportId} status to: ${status}`);
+
+      const report = await this.reportModel.findOneAndUpdate(
+        { reportId },
+        {
+          $set: {
+            status,
+            adminNotes: adminNotes || '',
+            reviewedAt: new Date(),
+            reviewedBy: reviewerId || '',
+          },
+        },
+        { new: true },
+      ).exec();
+
+      if (!report) {
+        throw new NotFoundException('Report not found');
+      }
+
+      return {
+        success: true,
+        message: 'Report status updated successfully',
+      };
+    } catch (error: any) {
+      this.logger.error(`Error updating report status: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Admin review of flagged ad
+   */
+  async reviewAd(
+    adId: string,
+    decision: 'approve' | 'remove' | 'request_changes',
+    adminNotes?: string,
+    reviewerId?: string,
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      this.logger.log(`Admin reviewing ad ${adId}, decision: ${decision}`);
+
+      // Update ad based on decision
+      const updateData: any = {
+        isUnderReview: false,
+        reviewedBy: reviewerId || '',
+        reviewedAt: new Date(),
+      };
+
+      if (decision === 'approve') {
+        updateData.status = 'active';
+        updateData.autoDisabled = false;
+        updateData.disabledReason = '';
+      } else if (decision === 'remove') {
+        updateData.status = 'deleted';
+        updateData.rejectionReason = adminNotes || 'Removed by admin after review';
+      } else if (decision === 'request_changes') {
+        updateData.status = 'pending';
+        updateData.rejectionReason = adminNotes || 'Changes requested by admin';
+      }
+
+      await this.adModel.findOneAndUpdate({ adId }, { $set: updateData }).exec();
+
+      // Mark all pending reports for this ad as action_taken
+      await this.reportModel.updateMany(
+        { adId, status: ReportStatus.PENDING },
+        {
+          $set: {
+            status: ReportStatus.ACTION_TAKEN,
+            reviewedAt: new Date(),
+            reviewedBy: reviewerId || '',
+          },
+        },
+      ).exec();
+
+      return {
+        success: true,
+        message: `Ad ${decision === 'approve' ? 'approved' : decision.replace('_', ' ')} successfully`,
+      };
+    } catch (error: any) {
+      this.logger.error(`Error reviewing ad: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Recalculate report counts for all ads (utility)
+   */
+  async resyncReportCounts(): Promise<{ updated: number }> {
+    try {
+      this.logger.log('Resyncing report counts for all ads');
+
+      const result = await this.reportModel.aggregate([
+        {
+          $group: {
+            _id: '$adId',
+            count: { $sum: 1 },
+          },
+        },
+      ]);
+
+      let updated = 0;
+      for (const item of result) {
+        await this.adModel.updateOne(
+          { adId: item._id },
+          { $set: { reportCount: item.count } },
+        ).exec();
+        updated++;
+      }
+
+      return { updated };
+    } catch (error: any) {
+      this.logger.error(`Error resyncing report counts: ${error.message}`);
+      throw error;
+    }
   }
 
   /* ============================================================

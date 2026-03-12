@@ -9,6 +9,8 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AdsService } from './ads.service';
 import { CreateAdDto } from './dto/create-ad.dto';
 import { UpdateAdDto } from './dto/update-ad.dto';
+import { CreateReportDto } from './dto/create-report.dto';
+import { UpdateReportStatusDto } from './dto/update-report-status.dto';
 import { KAFKA_TOPICS } from '../common/constants/kafka-topics';
 import { KafkaService } from '../kafka/kafka.service';
 import { v4 as uuidv4 } from 'uuid';
@@ -1041,6 +1043,192 @@ async testKafka() {
         message: 'Failed to get ad',
         error: error.message,
         timestamp: new Date().toISOString()
+      };
+    }
+  }
+
+  // ==================== REPORTING & MODERATION ROUTES ====================
+
+  /**
+   * Submit a report for an ad (requires authentication)
+   */
+  @UseGuards(JwtAuthGuard)
+  @Post(':adId/report')
+  @HttpCode(HttpStatus.OK)
+  async submitReport(
+    @Param('adId') adId: string,
+    @Body() createReportDto: CreateReportDto,
+    @CurrentUser() user: any,
+  ) {
+    this.logger.log(`User ${user?.id} reporting ad ${adId}`);
+
+    try {
+      const result = await this.adsService.submitReport(
+        adId,
+        user.id,
+        createReportDto.reason,
+        createReportDto.description,
+      );
+
+      return {
+        success: true,
+        message: result.message,
+        data: { reportId: result.reportId },
+      };
+    } catch (error: any) {
+      this.logger.error(`Error submitting report: ${error.message}`);
+      return {
+        success: false,
+        message: error.message || 'Failed to submit report',
+        statusCode: error.getStatus ? error.getStatus() : 400,
+      };
+    }
+  }
+
+  /**
+   * Get all reports for a specific ad (admin only)
+   */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @Get('reports/:adId')
+  async getAdReports(@Param('adId') adId: string) {
+    this.logger.log(`Admin fetching reports for ad: ${adId}`);
+
+    try {
+      const reports = await this.adsService.getAdReports(adId);
+      return {
+        success: true,
+        data: reports,
+        count: reports.length,
+      };
+    } catch (error: any) {
+      this.logger.error(`Error fetching reports: ${error.message}`);
+      return {
+        success: false,
+        message: 'Failed to fetch reports',
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Get pending reports queue (admin only)
+   */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @Get('reports/pending')
+  async getPendingReports() {
+    this.logger.log('Admin fetching pending reports queue');
+
+    try {
+      const reports = await this.adsService.getPendingReports();
+      return {
+        success: true,
+        data: reports,
+        count: reports.length,
+      };
+    } catch (error: any) {
+      this.logger.error(`Error fetching pending reports: ${error.message}`);
+      return {
+        success: false,
+        message: 'Failed to fetch pending reports',
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Update report status (admin only)
+   */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @Put('reports/:reportId/status')
+  async updateReportStatus(
+    @Param('reportId') reportId: string,
+    @Body() updateDto: UpdateReportStatusDto,
+    @CurrentUser() user: any,
+  ) {
+    this.logger.log(`Admin updating report ${reportId} status`);
+
+    try {
+      const result = await this.adsService.updateReportStatus(
+        reportId,
+        updateDto.status,
+        updateDto.adminNotes,
+        user.id,
+      );
+
+      return {
+        success: true,
+        message: result.message,
+      };
+    } catch (error: any) {
+      this.logger.error(`Error updating report status: ${error.message}`);
+      return {
+        success: false,
+        message: 'Failed to update report status',
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Admin review decision on flagged ad (admin only)
+   */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @Post('admin/:adId/review')
+  async reviewAd(
+    @Param('adId') adId: string,
+    @Body() body: { decision: 'approve' | 'remove' | 'request_changes'; adminNotes?: string },
+    @CurrentUser() user: any,
+  ) {
+    this.logger.log(`Admin reviewing ad ${adId}, decision: ${body.decision}`);
+
+    try {
+      const result = await this.adsService.reviewAd(
+        adId,
+        body.decision,
+        body.adminNotes,
+        user.id,
+      );
+
+      return {
+        success: true,
+        message: result.message,
+      };
+    } catch (error: any) {
+      this.logger.error(`Error reviewing ad: ${error.message}`);
+      return {
+        success: false,
+        message: 'Failed to review ad',
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Recalculate report counts for all ads (admin utility)
+   */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @Post('admin/resync-reports')
+  async resyncReportCounts() {
+    this.logger.log('Admin resyncing report counts');
+
+    try {
+      const result = await this.adsService.resyncReportCounts();
+      return {
+        success: true,
+        message: `Resynced ${result.updated} ads`,
+        data: result,
+      };
+    } catch (error: any) {
+      this.logger.error(`Error resyncing report counts: ${error.message}`);
+      return {
+        success: false,
+        message: 'Failed to resync report counts',
+        error: error.message,
       };
     }
   }
