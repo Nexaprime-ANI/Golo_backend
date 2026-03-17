@@ -23,4 +23,3 @@ sonarqube-analysis:
   only:
     - branches
     - merge_requests
-
