@@ -3,10 +3,22 @@ image: node:18
 stages:
   - test
 
+cache:
+  paths:
+    - node_modules/
+    - .npm/
+
 test:
   stage: test
+  services:
+    - mongo:latest
+    - redis:latest
+  variables:
+    MONGODB_URI: "mongodb://mongo:27017/test"
+    REDIS_URL: "redis://redis:6379"
+    PORT: "3002"
   script:
     - npm install
     - npm start &
-    - sleep 10
-    - curl http://localhost:3000 || exit 1
+    - sleep 15
+    - curl http://localhost:3002 || exit 1
