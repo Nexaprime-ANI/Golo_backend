@@ -14,7 +14,7 @@ test:
     - mongo:latest
     - redis:latest
   variables:
-    MONGODB_URI: "$MONGODB_URI"
+    MONGODB_URI: "mongodb://mongo:27017/test"
     REDIS_URL: "redis://redis:6379"
     PORT: "3002"
   script:
