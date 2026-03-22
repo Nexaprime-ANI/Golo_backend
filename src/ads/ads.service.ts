@@ -1553,6 +1553,124 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
     return this.adModel.countDocuments();
   }
 
+  async getTotalReportsCount(): Promise<number> {
+    return this.reportModel.countDocuments();
+  }
+
+  async getCategoryManagementPublic(limit = 12): Promise<{
+    summary: {
+      totalCategories: number;
+      activeCategories: number;
+      subcategories: number;
+      disabledHidden: number;
+    };
+    tree: Array<{ label: string; products: string[] }>;
+    rows: Array<{
+      name: string;
+      parent: string;
+      listings: number;
+      status: 'Active' | 'Hidden';
+      lastUpdated: string;
+    }>;
+    totalRows: number;
+    updatedAt: string;
+  }> {
+    const safeLimit = Math.max(1, Math.min(100, Number(limit) || 12));
+
+    const [
+      categoryValues,
+      activeCategoryValues,
+      subcategoryValues,
+      treeAgg,
+      listAgg,
+      totalRowsAgg,
+    ] = await Promise.all([
+      this.adModel.distinct('category').exec(),
+      this.adModel.distinct('category', { status: 'active' }).exec(),
+      this.adModel.distinct('subCategory').exec(),
+      this.adModel.aggregate([
+        {
+          $group: {
+            _id: '$category',
+            listings: { $sum: 1 },
+            products: { $addToSet: '$subCategory' },
+          },
+        },
+        { $sort: { listings: -1 } },
+        { $limit: 6 },
+        {
+          $project: {
+            _id: 0,
+            label: '$_id',
+            products: { $slice: ['$products', 8] },
+          },
+        },
+      ]).exec(),
+      this.adModel.aggregate([
+        {
+          $group: {
+            _id: {
+              category: '$category',
+              subCategory: '$subCategory',
+            },
+            listings: { $sum: 1 },
+            activeListings: {
+              $sum: {
+                $cond: [{ $eq: ['$status', 'active'] }, 1, 0],
+              },
+            },
+            lastUpdated: { $max: '$updatedAt' },
+          },
+        },
+        { $sort: { listings: -1 } },
+        { $limit: safeLimit },
+        {
+          $project: {
+            _id: 0,
+            name: '$_id.subCategory',
+            parent: '$_id.category',
+            listings: 1,
+            status: {
+              $cond: [{ $gt: ['$activeListings', 0] }, 'Active', 'Hidden'],
+            },
+            lastUpdated: {
+              $ifNull: ['$lastUpdated', new Date()],
+            },
+          },
+        },
+      ]).exec(),
+      this.adModel.aggregate([
+        {
+          $group: {
+            _id: {
+              category: '$category',
+              subCategory: '$subCategory',
+            },
+          },
+        },
+        { $count: 'total' },
+      ]).exec(),
+    ]);
+
+    const totalCategories = (categoryValues || []).filter(Boolean).length;
+    const activeCategories = (activeCategoryValues || []).filter(Boolean).length;
+    const subcategories = (subcategoryValues || []).filter(Boolean).length;
+    const disabledHidden = Math.max(totalCategories - activeCategories, 0);
+
+    return {
+      summary: {
+        totalCategories,
+        activeCategories,
+        subcategories,
+        disabledHidden,
+      },
+      tree: Array.isArray(treeAgg) ? treeAgg : [],
+      rows: Array.isArray(listAgg) ? listAgg : [],
+      totalRows: totalRowsAgg?.[0]?.total || 0,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
   /* ============================================================
      VALIDATION
   ============================================================ */

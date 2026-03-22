@@ -375,6 +375,35 @@ export class AdsController {
   }
 
   /**
+   * Get category management data for admin dashboard page
+   */
+  @Get('stats/category-management')
+  async getCategoryManagementStats(
+    @Query('limit') limit: string = '12'
+  ) {
+    this.logger.log('REST: Getting category management stats');
+
+    try {
+      const data = await this.adsService.getCategoryManagementPublic(parseInt(limit, 10));
+
+      return {
+        success: true,
+        data,
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error(`REST: Error getting category management stats: ${error.message}`);
+
+      return {
+        success: false,
+        message: 'Failed to get category management stats',
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  /**
    * Health check endpoint
    */
   @Get('health/status')

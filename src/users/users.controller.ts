@@ -58,6 +58,15 @@ export class UsersController {
     };
   }
 
+  @Get('dashboard/stats')
+  async getDashboardStats() {
+    const stats = await this.usersService.getDashboardStatsPublic();
+    return {
+      success: true,
+      data: stats,
+    };
+  }
+
   // ==================== USER ROUTES (Any logged-in user) ====================
   // 🔴 IMPORTANT: Specific routes must come BEFORE dynamic :id routes
 
@@ -363,4 +372,82 @@ async debugUserExists(@Param('id') id: string) {
     };
   }
 }
+
+  // ==================== USER REPORT ROUTES ====================
+
+  /**
+   * Get all user reports (admin only)
+   */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @Get('admin/reports')
+  async getAllUserReports(
+    @Query('limit') limit: string = '50',
+    @Query('skip') skip: string = '0'
+  ) {
+    try {
+      const result = await this.usersService.getAllUserReports(
+        parseInt(limit),
+        parseInt(skip)
+      );
+      return result;
+    } catch (error: any) {
+      return {
+        success: false,
+        message: 'Failed to fetch reports',
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Get specific report details (admin only)
+   */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @Get('admin/reports/:reportId')
+  async getUserReportById(@Param('reportId') reportId: string) {
+    try {
+      const result = await this.usersService.getUserReportById(reportId);
+      return result;
+    } catch (error: any) {
+      return {
+        success: false,
+        message: 'Failed to fetch report',
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Submit a report for a user (authenticated users)
+   */
+  @UseGuards(JwtAuthGuard)
+  @Post(':userId/report')
+  async submitUserReport(
+    @Param('userId') userId: string,
+    @Body() reportDto: any,
+    @CurrentUser() user: any
+  ) {
+    try {
+      const result = await this.usersService.submitUserReport(
+        userId,
+        user.id,
+        reportDto.reason,
+        reportDto.description,
+        reportDto.evidenceUrls
+      );
+      return {
+        success: true,
+        message: result.message,
+        data: { reportId: result.reportId },
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        message: 'Failed to submit report',
+        error: error.message,
+      };
+    }
+  }
 }

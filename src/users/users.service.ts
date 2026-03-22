@@ -6,6 +6,7 @@ import { JwtService } from '@nestjs/jwt';
 import { User, UserDocument, UserRole } from './schemas/user.schema';
 import { Notification, NotificationDocument } from './schemas/notification.schema';
 import { Merchant, MerchantDocument } from './schemas/merchant.schema';
+import { UserReport, UserReportDocument } from './schemas/user-report.schema';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { SocialAuthDto } from './dto/social-auth.dto';
@@ -16,6 +17,7 @@ import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import { AdsService } from '../ads/ads.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { Payment, PaymentDocument, PaymentStatus } from '../payments/schemas/payment.schema';
 
 @Injectable()
 export class UsersService {
@@ -28,11 +30,13 @@ export class UsersService {
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(Notification.name) private notificationModel: Model<NotificationDocument>,
     @InjectModel(Merchant.name) private merchantModel: Model<MerchantDocument>,
+    @InjectModel(UserReport.name) private userReportModel: Model<UserReportDocument>,
     private jwtService: JwtService,
     private readonly auditLogsService: AuditLogsService,
     private configService: ConfigService,
     @Optional() private kafkaService?: KafkaService,
     @Optional() @Inject(forwardRef(() => AdsService)) private adsService?: AdsService,
+    @Optional() @InjectModel(Payment.name) private paymentModel?: Model<PaymentDocument>,
   ) {
     const smtpHost = this.configService.get<string>('SMTP_HOST');
     const smtpPort = Number(this.configService.get<string>('SMTP_PORT') || '587');
@@ -649,6 +653,96 @@ export class UsersService {
     };
   }
 
+  async getDashboardStatsPublic(): Promise<any> {
+    this.logger.log('Fetching public dashboard stats');
+
+    const totalUsersPromise = this.userModel.countDocuments();
+    const activeMerchantsPromise = this.userModel.countDocuments({
+      role: UserRole.MERCHANT,
+      isBanned: { $ne: true },
+    });
+
+    const [totalUsers, activeMerchants] = await Promise.all([
+      totalUsersPromise,
+      activeMerchantsPromise,
+    ]);
+
+    let totalListings = 0;
+    let pendingApprovals = 0;
+    let overallReports = 0;
+
+    if (this.adsService) {
+      try {
+        const [adsCount, pendingReports, reportsCount] = await Promise.all([
+          this.adsService.getTotalAdsCount(),
+          this.adsService.getPendingReportsCount(),
+          this.adsService.getTotalReportsCount(),
+        ]);
+
+        totalListings = adsCount;
+        pendingApprovals = pendingReports;
+        overallReports = reportsCount;
+      } catch (error) {
+        this.logger.warn(`Failed to fetch ads dashboard stats: ${error.message}`);
+      }
+    }
+
+    let platformRevenue = 0;
+    if (this.paymentModel) {
+      try {
+        const revenueAgg = await this.paymentModel.aggregate([
+          {
+            $match: {
+              status: {
+                $in: [
+                  PaymentStatus.CREATED,
+                  PaymentStatus.AUTHORIZED,
+                  PaymentStatus.CAPTURED,
+                  PaymentStatus.PARTIALLY_REFUNDED,
+                ],
+              },
+            },
+          },
+          {
+            $project: {
+              grossInPaise: {
+                $ifNull: [
+                  '$amountInPaise',
+                  { $multiply: [{ $ifNull: ['$amount', 0] }, 100] },
+                ],
+              },
+              refundedInPaise: { $ifNull: ['$refundedAmountInPaise', 0] },
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              grossInPaise: { $sum: '$grossInPaise' },
+              refundedInPaise: { $sum: '$refundedInPaise' },
+            },
+          },
+        ]);
+
+        const grossInPaise = Number(revenueAgg?.[0]?.grossInPaise || 0);
+        const refundedInPaise = Number(revenueAgg?.[0]?.refundedInPaise || 0);
+        const netInPaise = Math.max(grossInPaise - refundedInPaise, 0);
+        platformRevenue = netInPaise / 100;
+      } catch (error) {
+        this.logger.warn(`Failed to fetch payment dashboard stats: ${error.message}`);
+      }
+    }
+
+    return {
+      totalUsers,
+      activeMerchants,
+      totalListings,
+      pendingApprovals,
+      overallReports,
+      platformRevenue,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
   // ==================== PASSWORD CHANGE with OTP ====================
 
   private generateOTP(): string {
@@ -990,6 +1084,115 @@ export class UsersService {
       }
     }
     return ads;
+  }
+
+  // ==================== USER REPORT METHODS ====================
+
+  async submitUserReport(
+    reportedUserId: string,
+    reporterUserId: string,
+    reason: string,
+    description?: string,
+    evidenceUrls?: string[],
+  ) {
+    try {
+      const reportedUser = await this.userModel.findById(reportedUserId);
+      if (!reportedUser) {
+        throw new NotFoundException('Reported user not found');
+      }
+
+      const reportId = `REP-USR-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+
+      const newReport = await this.userReportModel.create({
+        reportId,
+        reportedUserId,
+        reportedBy: reporterUserId,
+        reason,
+        description,
+        evidenceUrls,
+        status: 'pending',
+        priority: 0,
+      });
+
+      this.logger.log(`User report ${reportId} submitted by ${reporterUserId} against ${reportedUserId}`);
+
+      return {
+        reportId,
+        message: 'Report submitted successfully',
+        success: true,
+      };
+    } catch (error) {
+      this.logger.error(`Error submitting user report: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async getAllUserReports(limit = 50, skip = 0) {
+    try {
+      const reports = await this.userReportModel
+        .find()
+        .sort({ createdAt: -1 })
+        .limit(limit)
+        .skip(skip)
+        .lean();
+
+      const total = await this.userReportModel.countDocuments();
+
+      const formattedReports = reports.map((report: any) => ({
+        id: report._id?.toString() || '',
+        reportId: report.reportId || '',
+        entity: `User ${report.reportedUserId?.slice(0, 8)}...`,
+        by: `by ${report.reportedBy?.slice(0, 8) || 'Unknown User'}...`,
+        type: report.reason || 'Other',
+        priority: report.priority === 0 ? 'Medium' : 'High',
+        status: report.status || 'Pending',
+        createdAt: report.createdAt,
+      }));
+
+      return {
+        success: true,
+        data: formattedReports,
+        total,
+        limit,
+        skip,
+      };
+    } catch (error) {
+      this.logger.error(`Error fetching user reports: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async getUserReportById(reportId: string) {
+    try {
+      const report = await this.userReportModel.findOne({ reportId });
+
+      if (!report) {
+        throw new NotFoundException('Report not found');
+      }
+
+      const reportedUser = await this.userModel.findById(report.reportedUserId);
+
+      return {
+        success: true,
+        data: {
+          reportId: report.reportId,
+          reportedUser: {
+            id: reportedUser?._id?.toString(),
+            name: reportedUser?.name,
+            email: reportedUser?.email,
+          },
+          reason: report.reason,
+          description: report.description,
+          evidenceUrls: report.evidenceUrls || [],
+          status: report.status,
+          priority: report.priority,
+          createdAt: report.createdAt,
+        },
+      };
+    } catch (error) {
+      this.logger.error(`Error fetching report: ${error.message}`);
+      throw error;
+    }
   }
 
   // ==================== HELPER METHODS ====================

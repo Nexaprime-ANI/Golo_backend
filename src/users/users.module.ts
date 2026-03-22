@@ -8,9 +8,11 @@ import { UsersService } from './users.service';
 import { User, UserSchema } from './schemas/user.schema';
 import { Notification, NotificationSchema } from './schemas/notification.schema';
 import { Merchant, MerchantSchema } from './schemas/merchant.schema';
+import { UserReport, UserReportSchema } from './schemas/user-report.schema';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { KafkaModule } from '../kafka/kafka.module';
 import { AdsModule } from 'src/ads/ads.module';
+import { Payment, PaymentSchema } from '../payments/schemas/payment.schema';
 
 @Module({
   imports: [
@@ -18,6 +20,8 @@ import { AdsModule } from 'src/ads/ads.module';
       { name: User.name, schema: UserSchema },
       { name: Notification.name, schema: NotificationSchema },
       { name: Merchant.name, schema: MerchantSchema },
+      { name: Payment.name, schema: PaymentSchema },
+      { name: UserReport.name, schema: UserReportSchema },
     ]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
