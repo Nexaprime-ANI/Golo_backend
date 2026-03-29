@@ -1,12 +1,3 @@
-// ...existing code...
-
-  @Get('admin/reports/stats')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
-  async getUserReportStats() {
-    const stats = await this.usersService.getUserReportStats();
-    return { success: true, data: stats };
-  }
 import { 
   Controller, Post, Body, Get, Put, Delete, Param, 
   UseGuards, Query, Ip, NotFoundException 
