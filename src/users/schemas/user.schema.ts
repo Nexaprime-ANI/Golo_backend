@@ -93,11 +93,22 @@ export class User {
     updatedAt?: Date;
   };
 
+
   @Prop({ default: false })
   isBanned: boolean;
 
   @Prop()
   banReason?: string;
+
+  // Date until which the user is banned (null = permanent or not banned)
+  @Prop()
+  banUntil?: Date;
+
+  @Prop({ enum: ['Pending', 'Verified', 'Rejected', 'Under Review'], default: 'Pending' })
+  kycStatus?: string;
+
+  @Prop()
+  kycRejectionReason?: string;
 
   @Prop()
   createdAt: Date;

@@ -1,3 +1,4 @@
+// ...existing code...
 import {
   Controller, Get, Post, Put, Delete, Body, Param, Query,
   UsePipes, ValidationPipe, Logger, HttpCode, HttpStatus, UseGuards, Request
@@ -19,6 +20,20 @@ import { Optional } from '@nestjs/common';
 
 @Controller('ads')
 export class AdsController {
+    /**
+     * Admin: Get real-time listing report stats for admin panel cards
+     */
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles(UserRole.ADMIN)
+    @Get('reports/stats')
+    async getListingReportStats() {
+      // Real-time stats for admin panel cards
+      const stats = await this.adsService.getReportStats();
+      return {
+        success: true,
+        data: stats
+      };
+    }
   private readonly logger = new Logger(AdsController.name);
 
   constructor(
@@ -428,10 +443,23 @@ export class AdsController {
   async createAd(@Body() createAdDto: CreateAdDto, @CurrentUser() user: any) {
     this.logger.log(`REST: Creating new ad for user: ${user.id}`);
 
+    // Enforce banUntil: block ad posting if user is suspended
+    if (user.isBanned && user.banUntil && new Date(user.banUntil) > new Date()) {
+      const until = new Date(user.banUntil);
+      const daysLeft = Math.ceil((until.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+      this.logger.warn(`Ad creation blocked - user is suspended until ${until.toISOString()}: ${user.email}`);
+      return {
+        success: false,
+        message: `You are suspended from posting ads until ${until.toLocaleDateString()} (${daysLeft} day(s) left). Reason: ${user.banReason || 'No reason provided'}`,
+        error: 'User suspended',
+        timestamp: new Date().toISOString()
+      };
+    }
+
     try {
-      // Set userId from token (security - prevents spoofing)
+      // Always enforce userId from authenticated user
       createAdDto.userId = user.id;
-      createAdDto.userType = user.role === UserRole.ADMIN ? 'Admin' : 'Customer';
+      createAdDto.userType = user.role === 'admin' ? 'Admin' : 'Customer';
 
       const ad = await this.adsService.createAd(createAdDto);
 
@@ -468,9 +496,9 @@ export class AdsController {
   async createAdAsync(@Body() createAdDto: CreateAdDto, @CurrentUser() user: any) {
     this.logger.log(`REST: Sending async ad creation request for user: ${user.id}`);
 
-    // Set userId from token (security)
+    // Always enforce userId from authenticated user
     createAdDto.userId = user.id;
-    createAdDto.userType = user.role === UserRole.ADMIN ? 'Admin' : 'Customer';
+    createAdDto.userType = user.role === 'admin' ? 'Admin' : 'Customer';
 
     const correlationId = uuidv4();
 
@@ -1199,12 +1227,12 @@ async testKafka() {
   /**
    * Get reports for a specific ad (admin only)
    */
+
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
   @Get('reports/:adId')
   async getAdReports(@Param('adId') adId: string) {
-    this.logger.log(`Admin fetching reports for ad: ${adId}`);
-
+    this.logger.log(`Admin fetching enriched reports for ad: ${adId}`);
     try {
       const reports = await this.adsService.getAdReports(adId);
       return {
@@ -1213,10 +1241,34 @@ async testKafka() {
         count: reports.length,
       };
     } catch (error: any) {
-      this.logger.error(`Error fetching reports: ${error.message}`);
+      this.logger.error(`Error fetching enriched reports: ${error.message}`);
       return {
         success: false,
         message: 'Failed to fetch reports',
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Get a single report by reportId (admin only, enriched)
+   */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @Get('reports/report/:reportId')
+  async getReportByReportId(@Param('reportId') reportId: string) {
+    this.logger.log(`Admin fetching enriched report for reportId: ${reportId}`);
+    try {
+      const report = await this.adsService.getReportByReportId(reportId);
+      return {
+        success: true,
+        data: report ? [report] : [],
+      };
+    } catch (error: any) {
+      this.logger.error(`Error fetching enriched report: ${error.message}`);
+      return {
+        success: false,
+        message: 'Failed to fetch report',
         error: error.message,
       };
     }

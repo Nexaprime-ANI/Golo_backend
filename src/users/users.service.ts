@@ -1,3 +1,5 @@
+
+
 import { Injectable, ConflictException, UnauthorizedException, NotFoundException, BadRequestException, ForbiddenException, Logger, InternalServerErrorException, Optional, forwardRef, Inject } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -21,10 +23,41 @@ import { Payment, PaymentDocument, PaymentStatus } from '../payments/schemas/pay
 
 @Injectable()
 export class UsersService {
-  private readonly logger = new Logger(UsersService.name);
 
+  private readonly logger = new Logger(UsersService.name);
   private mailTransporter: nodemailer.Transporter | null = null;
   private mailFrom: string | null = null;
+
+  /**
+   * Admin: Send a warning notification to a user
+   */
+  async adminWarnUser(userId: string, message: string, adminId: string, adminEmail: string): Promise<void> {
+    this.logger.log(`Admin sending warning to user: ${userId}`);
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    await this.notificationModel.create({
+      recipientId: userId,
+      senderId: adminId,
+      senderName: adminEmail || 'admin',
+      adId: '-',
+      adTitle: '-',
+      type: 'admin_warning',
+      message: message || 'You have received a warning from admin.',
+      read: false,
+    });
+    if (this.auditLogsService) {
+      await this.auditLogsService.log({
+        action: 'USER_WARNED',
+        adminId,
+        adminEmail,
+        targetId: userId,
+        targetType: 'User',
+        details: { message },
+      });
+    }
+  }
 
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
@@ -62,7 +95,14 @@ export class UsersService {
   }
 
   // ==================== PUBLIC METHODS ====================
-
+  async getUserReportStats() {
+    // Example stats: total, pending, under investigation, resolved reports
+    const total = await this.userReportModel.countDocuments();
+    const pending = await this.userReportModel.countDocuments({ status: 'pending' });
+    const underInvestigation = await this.userReportModel.countDocuments({ status: 'under_investigation' });
+    const resolved = await this.userReportModel.countDocuments({ status: { $in: ['resolved', 'dismissed'] } });
+    return { total, pending, underInvestigation, resolved };
+  }
   async register(registerDto: RegisterDto): Promise<UserResponseDto> {
     this.logger.log(`Registering new user: ${registerDto.email}`);
     
@@ -155,8 +195,16 @@ export class UsersService {
     }
 
     if (user.isBanned) {
-      this.logger.warn(`Login failed - user is banned: ${loginDto.email}`);
-      throw new ForbiddenException(`Your account has been banned. Reason: ${user.banReason || 'No reason provided'}`);
+      // Check if banUntil is set and in the future
+      if (user.banUntil && new Date(user.banUntil) > new Date()) {
+        const until = new Date(user.banUntil);
+        const daysLeft = Math.ceil((until.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+        this.logger.warn(`Login failed - user is suspended until ${until.toISOString()}: ${loginDto.email}`);
+        throw new ForbiddenException(`Your account is suspended until ${until.toLocaleDateString()} (${daysLeft} day(s) left). Reason: ${user.banReason || 'No reason provided'}`);
+      } else {
+        // Ban expired, auto-unban
+        await this.userModel.findByIdAndUpdate(user._id, { $set: { isBanned: false, banReason: null, banUntil: null } });
+      }
     }
 
     if (loginDto.accountType === 'merchant' && user.accountType !== 'merchant') {
@@ -570,12 +618,18 @@ export class UsersService {
     }
   }
 
-  async banUser(userId: string, reason: string, adminId: string, adminEmail: string): Promise<UserResponseDto> {
-    this.logger.log(`Admin banning user: ${userId}`);
-    
+  /**
+   * Ban a user for a given duration (in days). If duration is not provided, ban is permanent.
+   */
+  async banUser(userId: string, reason: string, adminId: string, adminEmail: string, durationDays?: number): Promise<UserResponseDto> {
+    this.logger.log(`Admin banning user: ${userId} for ${durationDays || 'permanent'} days`);
+    let banUntil: Date | null = null;
+    if (durationDays && durationDays > 0) {
+      banUntil = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
+    }
     const user = await this.userModel.findByIdAndUpdate(
       userId,
-      { $set: { isBanned: true, banReason: reason, updatedAt: new Date() } },
+      { $set: { isBanned: true, banReason: reason, banUntil: banUntil, updatedAt: new Date() } },
       { new: true }
     ).exec();
 
@@ -589,7 +643,7 @@ export class UsersService {
       adminEmail,
       targetId: userId,
       targetType: 'User',
-      details: { reason }
+      details: { reason, banUntil }
     });
 
     return this.toResponseDto(user);
@@ -597,10 +651,9 @@ export class UsersService {
 
   async unbanUser(userId: string, adminId: string, adminEmail: string): Promise<UserResponseDto> {
     this.logger.log(`Admin unbanning user: ${userId}`);
-    
     const user = await this.userModel.findByIdAndUpdate(
       userId,
-      { $set: { isBanned: false, banReason: null, updatedAt: new Date() } },
+      { $set: { isBanned: false, banReason: null, banUntil: null, updatedAt: new Date() } },
       { new: true }
     ).exec();
 
@@ -1138,12 +1191,32 @@ export class UsersService {
 
       const total = await this.userReportModel.countDocuments();
 
+      // Helper to map reason enum to label
+      const reasonLabels: Record<string, string> = {
+        harassment: 'Harassment',
+        abuse: 'Abuse',
+        fraud: 'Fraud',
+        scam: 'Scam',
+        fake_account: 'Fake Account',
+        spam: 'Spam',
+        other: 'Other',
+      };
+
+      // Fetch user names for reportedUserId and reportedBy
+      const userIds = Array.from(new Set([
+        ...reports.map((r: any) => r.reportedUserId),
+        ...reports.map((r: any) => r.reportedBy),
+      ].filter(Boolean)));
+
+      const users = await this.userModel.find({ _id: { $in: userIds } }).lean();
+      const userMap = new Map(users.map((u: any) => [u._id.toString(), u.name]));
+
       const formattedReports = reports.map((report: any) => ({
         id: report._id?.toString() || '',
         reportId: report.reportId || '',
-        entity: `User ${report.reportedUserId?.slice(0, 8)}...`,
-        by: `by ${report.reportedBy?.slice(0, 8) || 'Unknown User'}...`,
-        type: report.reason || 'Other',
+        entity: userMap.get(report.reportedUserId) || `User ${report.reportedUserId?.slice(0, 8)}...`,
+        by: userMap.get(report.reportedBy) || `by ${report.reportedBy?.slice(0, 8) || 'Unknown User'}...`,
+        type: reasonLabels[report.reason] || 'Other',
         priority: report.priority === 0 ? 'Medium' : 'High',
         status: report.status || 'Pending',
         createdAt: report.createdAt,
@@ -1196,6 +1269,80 @@ export class UsersService {
   }
 
   // ==================== HELPER METHODS ====================
+
+  async getUsersByRole(role: string, page: number = 1, limit: number = 10, kycStatus?: string): Promise<{ users: any[]; total: number }> {
+    this.logger.log(`Getting users by role: ${role}, page: ${page}, limit: ${limit}, kycStatus: ${kycStatus}`);
+    
+    const query: any = { role };
+    if (kycStatus) {
+      query.kycStatus = kycStatus;
+    }
+
+    const [users, total] = await Promise.all([
+      this.userModel
+        .find(query)
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean()
+        .exec(),
+      this.userModel.countDocuments(query),
+    ]);
+
+    return {
+      users: users.map((user: any) => ({
+        id: user._id.toString(),
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        kycStatus: user.kycStatus || 'Pending',
+        city: user.profile?.city || '',
+        joinedDate: user.createdAt,
+        status: user.isBanned ? 'Suspended' : 'Active',
+        isBanned: user.isBanned,
+      })),
+      total,
+    };
+  }
+
+  async updateUserKycStatus(userId: string, kycStatus: string, rejectionReason?: string, adminId?: string, adminEmail?: string): Promise<any> {
+    this.logger.log(`Updating KYC status for user ${userId}: ${kycStatus}`);
+
+    const user = await this.userModel.findById(userId);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    user.kycStatus = kycStatus;
+    if (rejectionReason && kycStatus === 'Rejected') {
+      user.kycRejectionReason = rejectionReason;
+    }
+
+    await user.save();
+
+    // Log audit if audit service available
+    if (this.auditLogsService) {
+      try {
+        await this.auditLogsService.log({
+          action: `Updated KYC status to ${kycStatus}`,
+          adminId,
+          adminEmail: adminEmail || 'unknown',
+          targetId: userId,
+          targetType: 'User',
+          details: { previousStatus: user.kycStatus, newStatus: kycStatus, rejectionReason },
+        });
+      } catch (err) {
+        this.logger.warn(`Failed to log KYC update: ${err.message}`);
+      }
+    }
+
+    return {
+      id: user._id.toString(),
+      name: user.name,
+      email: user.email,
+      kycStatus: user.kycStatus,
+      kycRejectionReason: user.kycRejectionReason,
+    };
+  }
 
   private toResponseDto(user: UserDocument, merchantProfile: any = null): UserResponseDto {
     const normalizedRole = user.role === UserRole.ADMIN
