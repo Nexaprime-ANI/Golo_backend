@@ -58,7 +58,8 @@ async function bootstrap() {
 
   
 
-  const port = configService.get('config.service.port');
+  // const port = configService.get('config.service.port');
+  const port = 3002;
   await app.listen(port);
 
   logger.log(`Ads microservice is running on port ${port}`);

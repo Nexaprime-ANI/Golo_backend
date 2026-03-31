@@ -1,26 +1,27 @@
+image: node:18-alpine  
+
 stages:
-  - sonarqube
+  - validate
+  - build
+  - deploy
 
-variables:
-  SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
-  GIT_DEPTH: 0
+cache:
+  key: ${CI_COMMIT_REF_SLUG} 
+  # paths:
+  #     - node_modules/
+  #     - .npm/
 
-# SonarQube Code Quality Analysis
-sonarqube-analysis:
-  stage: sonarqube
-  image: eclipse-temurin:21-jdk
-  before_script:
-    - apt-get update && apt-get install -y curl unzip
-    - export SONAR_SCANNER_VERSION=6.1.0.4477
-    - export SONAR_SCANNER_HOME=$HOME/.sonar/sonar-scanner-$SONAR_SCANNER_VERSION-linux-x64
-    - curl --create-dirs -sSLo $HOME/.sonar/sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-$SONAR_SCANNER_VERSION-linux-x64.zip
-    - unzip -o $HOME/.sonar/sonar-scanner.zip -d $HOME/.sonar/
-    - export PATH=$SONAR_SCANNER_HOME/bin:$PATH
-    - export SONAR_SCANNER_OPTS="-Xmx1024m"
+feature-validation:
+  stage: validate
   script:
-    - sonar-scanner -Dsonar.projectKey="golo-test_golo-frontend" -Dsonar.sources=app -Dsonar.host.url="$SONAR_HOST_URL" -Dsonar.login="$SONAR_TOKEN" -Dsonar.organization="$SONAR_ORGANIZATION" -Dsonar.projectName="$CI_PROJECT_NAME" -Dsonar.projectVersion="$CI_COMMIT_SHA" -Dsonar.sourceEncoding=UTF-8 -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info -Dsonar.exclusions="node_modules/**,**/*.test.js,**/*.spec.js,.next/**"
-  allow_failure: true
-  only:
-    - branches
-    - merge_requests
-
+    - npm i
+    - npm i eslint
+    - npm ci
+    - npm run lint
+    - npm run test
+  artifacts:
+    paths:
+      - node_modules/
+    expire_in: 1 month
+  rules:
+    - when: always
