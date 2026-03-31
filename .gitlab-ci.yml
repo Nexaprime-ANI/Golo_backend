@@ -9,7 +9,7 @@ cache:
   key:
     files:
       - package-lock.json  
-    paths:
+  paths:
       - node_modules/
       - .npm/
 
