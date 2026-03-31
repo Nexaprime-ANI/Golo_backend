@@ -22,5 +22,4 @@ feature-validation:
       - node_modules/
     expire_in: 1 month
   rules:
-    - if:
       - when: always
