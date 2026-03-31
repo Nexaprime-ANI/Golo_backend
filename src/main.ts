@@ -48,8 +48,9 @@ async function bootstrap() {
     logger.warn('Kafka is disabled via ENABLE_KAFKA=false');
   }
 
+  // Always allow localhost:3001 for CORS in development
   app.enableCors({
-    origin: corsOrigins.length > 0 ? corsOrigins : ['http://localhost:3000'],
+    origin: ['http://localhost:3001'],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization'],
@@ -57,7 +58,8 @@ async function bootstrap() {
 
   
 
-  const port = configService.get('config.service.port');
+  // const port = configService.get('config.service.port');
+  const port = 3002;
   await app.listen(port);
 
   logger.log(`Ads microservice is running on port ${port}`);

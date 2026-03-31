@@ -1,0 +1,25 @@
+image: node:18-alpine  
+
+stages:
+  - validate
+  - build
+  - deploy
+
+cache:
+  key: ${CI_COMMIT_REF_SLUG} 
+  # paths:
+  #     - node_modules/
+  #     - .npm/
+
+feature-validation:
+  stage: validate
+  script:
+    - npm install
+    #- npm run lint
+    - npm run test
+  artifacts:
+    paths:
+      - node_modules/
+    expire_in: 1 month
+  rules:
+    - when: always

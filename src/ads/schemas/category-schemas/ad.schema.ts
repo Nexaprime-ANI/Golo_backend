@@ -59,6 +59,15 @@ export class Ad {
   @Prop({ default: false })
   negotiable: boolean;
 
+  @Prop({ default: 0 })
+  editCount: number;
+
+  @Prop({ default: false })
+  hasUsedEdit: boolean;
+
+  @Prop()
+  editedAt: Date;
+
   @Prop({ required: true })
   location: string;
 

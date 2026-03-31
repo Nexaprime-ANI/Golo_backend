@@ -32,6 +32,17 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         throw new UnauthorizedException('Invalid JWT payload - missing sub claim');
       }
       
+      // Handle admin tokens - they come from GOLO_Admin_Backend and have role: 'admin'
+      if (payload.role === 'admin') {
+        return {
+          id: payload.sub,
+          email: payload.email,
+          role: 'admin',
+          name: payload.name || payload.email,
+        };
+      }
+      
+      // For regular users, look them up in the database
       const user = await this.userModel.findById(payload.sub).exec();
       if (!user) {
         throw new UnauthorizedException('User not found');
