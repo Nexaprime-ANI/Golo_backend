@@ -1,5 +1,3 @@
-
-
 import { Injectable, ConflictException, UnauthorizedException, NotFoundException, BadRequestException, ForbiddenException, Logger, InternalServerErrorException, Optional, forwardRef, Inject } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -27,37 +25,6 @@ export class UsersService {
   private readonly logger = new Logger(UsersService.name);
   private mailTransporter: nodemailer.Transporter | null = null;
   private mailFrom: string | null = null;
-
-  /**
-   * Admin: Send a warning notification to a user
-   */
-  async adminWarnUser(userId: string, message: string, adminId: string, adminEmail: string): Promise<void> {
-    this.logger.log(`Admin sending warning to user: ${userId}`);
-    const user = await this.userModel.findById(userId).exec();
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-    await this.notificationModel.create({
-      recipientId: userId,
-      senderId: adminId,
-      senderName: adminEmail || 'admin',
-      adId: '-',
-      adTitle: '-',
-      type: 'admin_warning',
-      message: message || 'You have received a warning from admin.',
-      read: false,
-    });
-    if (this.auditLogsService) {
-      await this.auditLogsService.log({
-        action: 'USER_WARNED',
-        adminId,
-        adminEmail,
-        targetId: userId,
-        targetType: 'User',
-        details: { message },
-      });
-    }
-  }
 
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
@@ -95,27 +62,25 @@ export class UsersService {
   }
 
   // ==================== PUBLIC METHODS ====================
+
   async getUserReportStats() {
-    // Example stats: total, pending, under investigation, resolved reports
     const total = await this.userReportModel.countDocuments();
     const pending = await this.userReportModel.countDocuments({ status: 'pending' });
     const underInvestigation = await this.userReportModel.countDocuments({ status: 'under_investigation' });
     const resolved = await this.userReportModel.countDocuments({ status: { $in: ['resolved', 'dismissed'] } });
     return { total, pending, underInvestigation, resolved };
   }
+
   async register(registerDto: RegisterDto): Promise<UserResponseDto> {
     this.logger.log(`Registering new user: ${registerDto.email}`);
-    
-    // Check if user exists
+
     const existingUser = await this.userModel.findOne({ email: registerDto.email }).exec();
     if (existingUser) {
       throw new ConflictException('User with this email already exists');
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(registerDto.password, 10);
 
-    // Check for admin email in config
     const adminEmail = this.configService.get<string>('ADMIN_EMAIL');
     const isSystemAdmin = adminEmail && registerDto.email.toLowerCase() === adminEmail.toLowerCase();
 
@@ -134,7 +99,6 @@ export class UsersService {
       ? UserRole.ADMIN
       : (accountType === 'merchant' ? UserRole.MERCHANT : UserRole.USER);
 
-    // Create user (Admin if matches config, else based on account type)
     const user = new this.userModel({
       name: registerDto.name,
       email: registerDto.email,
@@ -164,7 +128,6 @@ export class UsersService {
       });
     }
 
-    // Emit Kafka event
     if (this.kafkaService) {
       await this.kafkaService.emit(KAFKA_TOPICS.USER_REGISTERED, {
         userId: savedUser._id,
@@ -181,7 +144,7 @@ export class UsersService {
 
   async login(loginDto: LoginDto, ip?: string): Promise<{ accessToken: string; refreshToken: string; user: UserResponseDto }> {
     this.logger.log(`Login attempt: ${loginDto.email}`);
-    
+
     const user = await this.userModel.findOne({ email: loginDto.email }).exec();
     if (!user) {
       this.logger.warn(`Login failed - user not found: ${loginDto.email}`);
@@ -195,14 +158,12 @@ export class UsersService {
     }
 
     if (user.isBanned) {
-      // Check if banUntil is set and in the future
       if (user.banUntil && new Date(user.banUntil) > new Date()) {
         const until = new Date(user.banUntil);
         const daysLeft = Math.ceil((until.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
         this.logger.warn(`Login failed - user is suspended until ${until.toISOString()}: ${loginDto.email}`);
         throw new ForbiddenException(`Your account is suspended until ${until.toLocaleDateString()} (${daysLeft} day(s) left). Reason: ${user.banReason || 'No reason provided'}`);
       } else {
-        // Ban expired, auto-unban
         await this.userModel.findByIdAndUpdate(user._id, { $set: { isBanned: false, banReason: null, banUntil: null } });
       }
     }
@@ -216,7 +177,6 @@ export class UsersService {
       await user.save();
     }
 
-    // Auto-promote to admin if email matches config
     const adminEmail = this.configService.get<string>('ADMIN_EMAIL');
     if (adminEmail && user.email.toLowerCase() === adminEmail.toLowerCase() && user.role !== UserRole.ADMIN) {
       this.logger.log(`Auto-promoting ${user.email} to ADMIN based on config`);
@@ -224,7 +184,6 @@ export class UsersService {
       await user.save();
     }
 
-    // Generate tokens
     const payload = { sub: user._id, email: user.email, role: user.role };
     const accessToken = this.jwtService.sign(payload, {
       secret: this.configService.get('JWT_SECRET'),
@@ -235,7 +194,6 @@ export class UsersService {
       expiresIn: this.configService.get('JWT_REFRESH_EXPIRATION') || '7d',
     });
 
-    // Save refresh token
     await this.userModel.updateOne(
       { _id: user._id },
       {
@@ -244,7 +202,6 @@ export class UsersService {
       }
     ).exec();
 
-    // Emit Kafka event
     if (this.kafkaService) {
       await this.kafkaService.emit(KAFKA_TOPICS.USER_LOGGED_IN, {
         userId: user._id,
@@ -378,7 +335,7 @@ export class UsersService {
 
   async logout(userId: string, refreshToken: string): Promise<void> {
     this.logger.log(`Logout user: ${userId}`);
-    
+
     await this.userModel.updateOne(
       { _id: userId },
       { $pull: { refreshTokens: refreshToken } }
@@ -398,7 +355,7 @@ export class UsersService {
 
   async getProfile(userId: string): Promise<UserResponseDto> {
     this.logger.log(`Getting profile for user: ${userId}`);
-    
+
     const user = await this.userModel.findById(userId).exec();
     if (!user) {
       throw new NotFoundException('User not found');
@@ -424,23 +381,21 @@ export class UsersService {
   async updateProfile(userId: string, updateData: any): Promise<UserResponseDto> {
     this.logger.log(`Updating profile for user: ${userId}`);
     this.logger.debug(`Update data received: ${JSON.stringify(updateData)}`);
-    
-    // Check if email is being changed and if it's already taken
+
     if (updateData.email) {
       this.logger.log(`Checking if email ${updateData.email} is already in use`);
-      const existingUser = await this.userModel.findOne({ 
+      const existingUser = await this.userModel.findOne({
         email: updateData.email,
         _id: { $ne: userId }
       }).exec();
-      
+
       if (existingUser) {
         throw new ConflictException('Email is already in use');
       }
     }
-    
-    // Only allow updating specific fields
+
     const allowedUpdates: any = {};
-    
+
     if (updateData.name) allowedUpdates.name = updateData.name;
     if (updateData.email) allowedUpdates.email = updateData.email;
     if (updateData.profile?.phone) allowedUpdates['profile.phone'] = updateData.profile.phone;
@@ -469,12 +424,11 @@ export class UsersService {
   async findById(userId: string): Promise<UserResponseDto> {
     try {
       this.logger.log(`Find by ID: ${userId}`);
-      
-      // Check if userId is a valid ObjectId format
+
       if (!userId.match(/^[0-9a-fA-F]{24}$/)) {
         throw new BadRequestException('Invalid user ID format');
       }
-      
+
       const user = await this.userModel.findById(userId).exec();
       if (!user) {
         throw new NotFoundException(`User with ID ${userId} not found`);
@@ -489,40 +443,35 @@ export class UsersService {
     }
   }
 
-  // 🔴 FIXED: getUserById method with proper logging
   async getUserById(userId: string): Promise<UserResponseDto> {
     try {
       this.logger.log(`Getting user by ID: ${userId}`);
-      
-      // Check if userId is a valid ObjectId format
+
       if (!userId || !userId.match(/^[0-9a-fA-F]{24}$/)) {
         this.logger.warn(`Invalid user ID format: ${userId}`);
         throw new BadRequestException('Invalid user ID format');
       }
-      
-      // Find user in database
+
       const user = await this.userModel.findById(userId).exec();
-      
-      // Check if user exists
+
       if (!user) {
         this.logger.warn(`User not found: ${userId}`);
         throw new NotFoundException(`User with ID ${userId} not found`);
       }
-      
+
       this.logger.log(`User found: ${user.email}`);
       return this.toResponseDto(user);
-      
+
     } catch (error) {
-      // Handle different types of errors
       if (error.name === 'CastError') {
         this.logger.error(`Cast error for ID ${userId}`);
         throw new BadRequestException('Invalid user ID format');
       }
-      
+
       if (error instanceof NotFoundException || error instanceof BadRequestException) {
         throw error;
       }
-      
+
       this.logger.error(`Unexpected error getting user ${userId}: ${error.message}`);
       throw new InternalServerErrorException('Failed to get user');
     }
@@ -535,9 +484,9 @@ export class UsersService {
 
   async getAllUsers(page: number = 1, limit: number = 10): Promise<{ users: UserResponseDto[]; total: number }> {
     this.logger.log(`Getting all users - Page: ${page}, Limit: ${limit}`);
-    
+
     const skip = (page - 1) * limit;
-    
+
     const [users, total] = await Promise.all([
       this.userModel
         .find()
@@ -568,8 +517,7 @@ export class UsersService {
 
   async adminUpdateUser(userId: string, updateData: any, adminId: string, adminEmail: string): Promise<UserResponseDto> {
     this.logger.log(`Admin updating user: ${userId}`);
-    
-    // Admin can update any field
+
     const user = await this.userModel.findByIdAndUpdate(
       userId,
       { $set: { ...updateData, updatedAt: new Date() } },
@@ -594,7 +542,7 @@ export class UsersService {
 
   async adminDeleteUser(userId: string, adminId: string, adminEmail: string): Promise<void> {
     this.logger.log(`Admin deleting user: ${userId}`);
-    
+
     const result = await this.userModel.deleteOne({ _id: userId }).exec();
     if (result.deletedCount === 0) {
       throw new NotFoundException('User not found');
@@ -618,9 +566,6 @@ export class UsersService {
     }
   }
 
-  /**
-   * Ban a user for a given duration (in days). If duration is not provided, ban is permanent.
-   */
   async banUser(userId: string, reason: string, adminId: string, adminEmail: string, durationDays?: number): Promise<UserResponseDto> {
     this.logger.log(`Admin banning user: ${userId} for ${durationDays || 'permanent'} days`);
     let banUntil: Date | null = null;
@@ -674,7 +619,7 @@ export class UsersService {
 
   async adminGetStats(): Promise<any> {
     this.logger.log('Admin getting stats');
-    
+
     const totalUsers = await this.userModel.countDocuments();
     const totalAdmins = await this.userModel.countDocuments({ role: UserRole.ADMIN });
     const totalRegularUsers = await this.userModel.countDocuments({ role: UserRole.USER });
@@ -684,7 +629,6 @@ export class UsersService {
       .limit(5)
       .exec();
 
-    // Fetch ads-related stats if AdsService is available
     let pendingReports = 0;
     let totalAds = 0;
     if (this.adsService) {
@@ -796,6 +740,129 @@ export class UsersService {
     };
   }
 
+  // ==================== MANAGER ADMIN METHODS ====================
+
+  async adminGetAllManagers(): Promise<UserResponseDto[]> {
+    const managers = await this.userModel.find({ role: UserRole.MANAGER }).sort({ createdAt: -1 }).exec();
+    return managers.map(user => this.toResponseDto(user));
+  }
+
+  async adminCreateManager(dto: RegisterDto, adminId: string, adminEmail: string): Promise<User> {
+    const existingUser = await this.userModel.findOne({ email: dto.email }).exec();
+    if (existingUser) {
+      throw new ConflictException('User with this email already exists');
+    }
+
+    const hashedPassword = await bcrypt.hash(dto.password, 10);
+
+    const manager = new this.userModel({
+      name: dto.name,
+      email: dto.email,
+      password: hashedPassword,
+      role: UserRole.MANAGER,
+      accountType: 'user',
+      profile: {},
+      metadata: {
+        registeredIp: '0.0.0.0',
+      },
+      refreshTokens: [],
+    });
+
+    const savedManager = await manager.save();
+
+    if (this.kafkaService) {
+      await this.kafkaService.emit(KAFKA_TOPICS.USER_REGISTERED, {
+        userId: savedManager._id,
+        email: savedManager.email,
+        role: savedManager.role,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    return savedManager;
+  }
+
+  async adminUpdateManager(id: string, dto: any, adminId: string, adminEmail: string): Promise<UserResponseDto> {
+    const allowedUpdates: any = {};
+    if (dto.name) allowedUpdates.name = dto.name;
+    if (dto.email) allowedUpdates.email = dto.email;
+    if (dto.profile?.phone) allowedUpdates['profile.phone'] = dto.profile.phone;
+    const manager = await this.userModel.findOneAndUpdate(
+      { _id: id, role: UserRole.MANAGER },
+      { $set: { ...allowedUpdates, updatedAt: new Date() } },
+      { new: true }
+    ).exec();
+    if (!manager) throw new NotFoundException('Manager not found');
+    await this.auditLogsService.log({
+      action: 'MANAGER_UPDATED',
+      adminId,
+      adminEmail,
+      targetId: id,
+      targetType: 'User',
+      details: { updatedFields: allowedUpdates }
+    });
+    return this.toResponseDto(manager);
+  }
+
+  async adminDeleteManager(id: string, adminId: string, adminEmail: string): Promise<void> {
+    const result = await this.userModel.deleteOne({ _id: id, role: UserRole.MANAGER }).exec();
+    if (result.deletedCount === 0) throw new NotFoundException('Manager not found');
+    await this.auditLogsService.log({
+      action: 'MANAGER_DELETED',
+      adminId,
+      adminEmail,
+      targetId: id,
+      targetType: 'User',
+    });
+  }
+
+  async adminDiscardManager(id: string, adminId: string, adminEmail: string): Promise<void> {
+    const manager = await this.userModel.findOneAndUpdate(
+      { _id: id, role: UserRole.MANAGER },
+      { $set: { isBanned: true, banReason: 'Discarded by admin', updatedAt: new Date() } },
+      { new: true }
+    ).exec();
+    if (!manager) throw new NotFoundException('Manager not found');
+    await this.auditLogsService.log({
+      action: 'MANAGER_DISCARDED',
+      adminId,
+      adminEmail,
+      targetId: id,
+      targetType: 'User',
+      details: { reason: 'Discarded by admin' }
+    });
+  }
+
+  // ==================== ADMIN WARN ====================
+
+  async adminWarnUser(userId: string, message: string, adminId: string, adminEmail: string): Promise<void> {
+    this.logger.log(`Admin sending warning to user: ${userId}`);
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    await this.notificationModel.create({
+      recipientId: userId,
+      senderId: adminId,
+      senderName: adminEmail || 'admin',
+      adId: '-',
+      adTitle: '-',
+      type: 'admin_warning',
+      message: message || 'You have received a warning from admin.',
+      read: false,
+    });
+    if (this.auditLogsService) {
+      await this.auditLogsService.log({
+        action: 'USER_WARNED',
+        adminId,
+        adminEmail,
+        targetId: userId,
+        targetType: 'User',
+        details: { message },
+      });
+    }
+  }
+
   // ==================== PASSWORD CHANGE with OTP ====================
 
   private generateOTP(): string {
@@ -804,34 +871,30 @@ export class UsersService {
 
   async sendPasswordChangeOTP(userId: string): Promise<any> {
     this.logger.log(`Sending password change OTP email for user: ${userId}`);
-    
+
     try {
-      // Validate userId - handle both string and ObjectId
       if (!userId) {
         throw new BadRequestException('User ID is required');
       }
-      
+
       const userIdStr = userId.toString();
       this.logger.debug(`Processing userId: ${userIdStr}`);
 
-      // Get full user document with all fields
       const user = await this.userModel.findById(userIdStr).exec();
       if (!user) {
         this.logger.warn(`User not found with ID: ${userIdStr}`);
         throw new NotFoundException('User not found');
       }
-      
+
       this.logger.debug(`User found: ${user.email}`);
-      this.logger.debug(`User email: ${user.email || 'NOT SET'}`);
-      
+
       if (!user.email) {
         throw new BadRequestException('Registered email not found for this account.');
       }
 
       const otp = this.generateOTP();
-      const expiryTime = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+      const expiryTime = new Date(Date.now() + 5 * 60 * 1000);
 
-      // Save OTP and reset verification status
       await this.userModel.findByIdAndUpdate(
         userIdStr,
         {
@@ -868,7 +931,7 @@ export class UsersService {
 
       return {
         message: 'OTP sent to your registered email address',
-        expiresIn: 300, // 5 minutes in seconds
+        expiresIn: 300,
       };
     } catch (error) {
       this.logger.error(`Error in sendPasswordChangeOTP: ${error.message}`);
@@ -879,7 +942,7 @@ export class UsersService {
 
   async verifyPasswordChangeOTP(userId: string, otp: string): Promise<any> {
     this.logger.log(`Verifying password change OTP for user: ${userId}`);
-    
+
     const user = await this.userModel.findById(userId).exec();
     if (!user) {
       throw new NotFoundException('User not found');
@@ -897,7 +960,6 @@ export class UsersService {
       throw new UnauthorizedException('Invalid OTP');
     }
 
-    // Mark OTP as verified
     await this.userModel.findByIdAndUpdate(
       userId,
       {
@@ -913,7 +975,7 @@ export class UsersService {
 
   async changePasswordWithOTP(userId: string, otp: string, newPassword: string): Promise<UserResponseDto> {
     this.logger.log(`Changing password with OTP for user: ${userId}`);
-    
+
     const user = await this.userModel.findById(userId).exec();
     if (!user) {
       throw new NotFoundException('User not found');
@@ -944,10 +1006,8 @@ export class UsersService {
       }
     }
 
-    // Hash new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-    // Update password and clear OTP
     const updatedUser = await this.userModel.findByIdAndUpdate(
       userId,
       {
@@ -977,7 +1037,7 @@ export class UsersService {
 
   async toggleWishlist(userId: string, adId: string): Promise<{ wishlist: string[], added: boolean }> {
     this.logger.log(`Toggling wishlist for user: ${userId}, ad: ${adId}`);
-    
+
     if (!adId) {
       throw new BadRequestException('Ad ID is required');
     }
@@ -999,7 +1059,6 @@ export class UsersService {
 
     await this.userModel.findByIdAndUpdate(userId, { wishlist }).exec();
 
-    // Create notification for the ad owner when someone adds to wishlist
     if (added && this.adsService) {
       try {
         const ad = await this.adsService.getAdById(adId);
@@ -1156,7 +1215,7 @@ export class UsersService {
 
       const reportId = `REP-USR-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
 
-      const newReport = await this.userReportModel.create({
+      await this.userReportModel.create({
         reportId,
         reportedUserId,
         reportedBy: reporterUserId,
@@ -1191,7 +1250,6 @@ export class UsersService {
 
       const total = await this.userReportModel.countDocuments();
 
-      // Helper to map reason enum to label
       const reasonLabels: Record<string, string> = {
         harassment: 'Harassment',
         abuse: 'Abuse',
@@ -1202,7 +1260,6 @@ export class UsersService {
         other: 'Other',
       };
 
-      // Fetch user names for reportedUserId and reportedBy
       const userIds = Array.from(new Set([
         ...reports.map((r: any) => r.reportedUserId),
         ...reports.map((r: any) => r.reportedBy),
@@ -1272,7 +1329,7 @@ export class UsersService {
 
   async getUsersByRole(role: string, page: number = 1, limit: number = 10, kycStatus?: string): Promise<{ users: any[]; total: number }> {
     this.logger.log(`Getting users by role: ${role}, page: ${page}, limit: ${limit}, kycStatus: ${kycStatus}`);
-    
+
     const query: any = { role };
     if (kycStatus) {
       query.kycStatus = kycStatus;
@@ -1319,7 +1376,6 @@ export class UsersService {
 
     await user.save();
 
-    // Log audit if audit service available
     if (this.auditLogsService) {
       try {
         await this.auditLogsService.log({

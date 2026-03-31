@@ -48,8 +48,9 @@ async function bootstrap() {
     logger.warn('Kafka is disabled via ENABLE_KAFKA=false');
   }
 
+  // Always allow localhost:3001 for CORS in development
   app.enableCors({
-    origin: corsOrigins.length > 0 ? corsOrigins : ['http://localhost:3000', 'http://localhost:3001'],
+    origin: ['http://localhost:3001'],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization'],

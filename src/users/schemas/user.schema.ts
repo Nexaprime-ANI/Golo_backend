@@ -6,7 +6,8 @@ export type UserDocument = User & Document;
 export enum UserRole {
   USER = 'customer',
   MERCHANT = 'merchant',
-  ADMIN = 'admin'
+  ADMIN = 'admin',
+  MANAGER = 'manager',
 }
 
 @Schema({ timestamps: true })

@@ -20,6 +20,46 @@ export class UsersController {
 
   constructor(private readonly usersService: UsersService) {}
 
+  // ==================== MANAGER ADMIN ====================
+  @Get('admin/managers')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async adminGetAllManagers() {
+    return { success: true, data: await this.usersService.adminGetAllManagers() };
+  }
+
+  @Post('admin/managers')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async adminCreateManager(@Body() dto: RegisterDto, @CurrentUser() admin: any) {
+    const manager = await this.usersService.adminCreateManager(dto, admin.id, admin.email);
+    return { success: true, data: manager };
+  }
+
+  @Put('admin/managers/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async adminUpdateManager(@Param('id') id: string, @Body() dto: any, @CurrentUser() admin: any) {
+    const manager = await this.usersService.adminUpdateManager(id, dto, admin.id, admin.email);
+    return { success: true, data: manager };
+  }
+
+  @Delete('admin/managers/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async adminDeleteManager(@Param('id') id: string, @CurrentUser() admin: any) {
+    await this.usersService.adminDeleteManager(id, admin.id, admin.email);
+    return { success: true };
+  }
+
+  @Post('admin/managers/:id/discard')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async adminDiscardManager(@Param('id') id: string, @CurrentUser() admin: any) {
+    await this.usersService.adminDiscardManager(id, admin.id, admin.email);
+    return { success: true };
+  }
+
   // ==================== USER REPORT ====================
   @Post(':id/report')
   @UseGuards(JwtAuthGuard)
@@ -41,20 +81,6 @@ export class UsersController {
       evidenceUrls,
     );
     return { success: true, ...result };
-  }
-
-  // ==================== ADMIN SUSPEND/UNSUSPEND ====================
-  @Post('admin/users/:id/ban')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
-  async banUser(
-    @Param('id') id: string,
-    @Body('reason') reason: string,
-    @Body('duration') duration: number,
-    @CurrentUser() admin: any,
-  ) {
-    const user = await this.usersService.banUser(id, reason, admin.id, admin.email, duration);
-    return { success: true, data: user };
   }
 
   @Post('admin/users/:id/unban')
@@ -151,7 +177,6 @@ export class UsersController {
   }
 
   // ==================== WISHLIST ====================
-
   @Get('wishlist')
   @UseGuards(JwtAuthGuard)
   async getWishlist(@CurrentUser() user: any) {
