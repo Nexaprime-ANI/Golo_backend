@@ -14,8 +14,6 @@ cache:
 feature-validation:
   stage: validate
   script:
-    - npm i
-    - npm i eslint
     - npm ci
     - npm run lint
     - npm run test
