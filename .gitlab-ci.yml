@@ -23,7 +23,3 @@ feature-validation:
     expire_in: 1 month
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^feature\/.*$/'
-      changes:
-        - src/**/*
-        - package.json
-        - package-lock.json
