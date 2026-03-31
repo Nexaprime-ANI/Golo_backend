@@ -5,6 +5,7 @@ export type UserDocument = User & Document;
 
 export enum UserRole {
   USER = 'customer',
+  MERCHANT = 'merchant',
   ADMIN = 'admin'
 }
 
@@ -24,6 +25,9 @@ export class User {
 
   @Prop({ required: true, enum: UserRole, default: UserRole.USER })
   role: UserRole;
+
+  @Prop({ enum: ['user', 'merchant'], default: 'user' })
+  accountType: 'user' | 'merchant';
 
   @Prop({ default: false })
   isEmailVerified: boolean;
@@ -71,11 +75,40 @@ export class User {
   @Prop({ type: [String], default: [] })
   wishlist: string[];
 
+  @Prop({
+    type: {
+      category: String,
+      title: String,
+      description: String,
+      createdAt: Date,
+      updatedAt: Date,
+    },
+    default: null,
+  })
+  iWantPreference?: {
+    category?: string;
+    title?: string;
+    description?: string;
+    createdAt?: Date;
+    updatedAt?: Date;
+  };
+
+
   @Prop({ default: false })
   isBanned: boolean;
 
   @Prop()
   banReason?: string;
+
+  // Date until which the user is banned (null = permanent or not banned)
+  @Prop()
+  banUntil?: Date;
+
+  @Prop({ enum: ['Pending', 'Verified', 'Rejected', 'Under Review'], default: 'Pending' })
+  kycStatus?: string;
+
+  @Prop()
+  kycRejectionReason?: string;
 
   @Prop()
   createdAt: Date;

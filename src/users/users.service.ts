@@ -1,9 +1,14 @@
+
+
 import { Injectable, ConflictException, UnauthorizedException, NotFoundException, BadRequestException, ForbiddenException, Logger, InternalServerErrorException, Optional, forwardRef, Inject } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
 import { User, UserDocument, UserRole } from './schemas/user.schema';
+import { Notification, NotificationDocument } from './schemas/notification.schema';
+import { Merchant, MerchantDocument } from './schemas/merchant.schema';
+import { UserReport, UserReportDocument } from './schemas/user-report.schema';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { SocialAuthDto } from './dto/social-auth.dto';
@@ -14,21 +19,57 @@ import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import { AdsService } from '../ads/ads.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { Payment, PaymentDocument, PaymentStatus } from '../payments/schemas/payment.schema';
 
 @Injectable()
 export class UsersService {
-  private readonly logger = new Logger(UsersService.name);
 
+  private readonly logger = new Logger(UsersService.name);
   private mailTransporter: nodemailer.Transporter | null = null;
   private mailFrom: string | null = null;
 
+  /**
+   * Admin: Send a warning notification to a user
+   */
+  async adminWarnUser(userId: string, message: string, adminId: string, adminEmail: string): Promise<void> {
+    this.logger.log(`Admin sending warning to user: ${userId}`);
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    await this.notificationModel.create({
+      recipientId: userId,
+      senderId: adminId,
+      senderName: adminEmail || 'admin',
+      adId: '-',
+      adTitle: '-',
+      type: 'admin_warning',
+      message: message || 'You have received a warning from admin.',
+      read: false,
+    });
+    if (this.auditLogsService) {
+      await this.auditLogsService.log({
+        action: 'USER_WARNED',
+        adminId,
+        adminEmail,
+        targetId: userId,
+        targetType: 'User',
+        details: { message },
+      });
+    }
+  }
+
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
+    @InjectModel(Notification.name) private notificationModel: Model<NotificationDocument>,
+    @InjectModel(Merchant.name) private merchantModel: Model<MerchantDocument>,
+    @InjectModel(UserReport.name) private userReportModel: Model<UserReportDocument>,
     private jwtService: JwtService,
     private readonly auditLogsService: AuditLogsService,
     private configService: ConfigService,
     @Optional() private kafkaService?: KafkaService,
     @Optional() @Inject(forwardRef(() => AdsService)) private adsService?: AdsService,
+    @Optional() @InjectModel(Payment.name) private paymentModel?: Model<PaymentDocument>,
   ) {
     const smtpHost = this.configService.get<string>('SMTP_HOST');
     const smtpPort = Number(this.configService.get<string>('SMTP_PORT') || '587');
@@ -54,7 +95,14 @@ export class UsersService {
   }
 
   // ==================== PUBLIC METHODS ====================
-
+  async getUserReportStats() {
+    // Example stats: total, pending, under investigation, resolved reports
+    const total = await this.userReportModel.countDocuments();
+    const pending = await this.userReportModel.countDocuments({ status: 'pending' });
+    const underInvestigation = await this.userReportModel.countDocuments({ status: 'under_investigation' });
+    const resolved = await this.userReportModel.countDocuments({ status: { $in: ['resolved', 'dismissed'] } });
+    return { total, pending, underInvestigation, resolved };
+  }
   async register(registerDto: RegisterDto): Promise<UserResponseDto> {
     this.logger.log(`Registering new user: ${registerDto.email}`);
     
@@ -71,12 +119,28 @@ export class UsersService {
     const adminEmail = this.configService.get<string>('ADMIN_EMAIL');
     const isSystemAdmin = adminEmail && registerDto.email.toLowerCase() === adminEmail.toLowerCase();
 
-    // Create user (Admin if matches config, else USER)
+    const accountType = registerDto.accountType === 'merchant' ? 'merchant' : 'user';
+
+    if (accountType === 'merchant') {
+      if (!registerDto.storeName?.trim()) {
+        throw new BadRequestException('Store name is required for merchant registration');
+      }
+      if (!registerDto.storeEmail?.trim()) {
+        throw new BadRequestException('Store email is required for merchant registration');
+      }
+    }
+
+    const assignedRole = isSystemAdmin
+      ? UserRole.ADMIN
+      : (accountType === 'merchant' ? UserRole.MERCHANT : UserRole.USER);
+
+    // Create user (Admin if matches config, else based on account type)
     const user = new this.userModel({
       name: registerDto.name,
       email: registerDto.email,
       password: hashedPassword,
-      role: isSystemAdmin ? UserRole.ADMIN : UserRole.USER,
+      role: assignedRole,
+      accountType,
       profile: {
         phone: registerDto.phone,
       },
@@ -87,6 +151,18 @@ export class UsersService {
     });
 
     const savedUser = await user.save();
+
+    if (accountType === 'merchant') {
+      await this.merchantModel.create({
+        userId: savedUser._id.toString(),
+        storeName: registerDto.storeName?.trim(),
+        storeEmail: registerDto.storeEmail?.trim() || registerDto.email,
+        gstNumber: registerDto.gstNumber?.trim() || undefined,
+        contactNumber: registerDto.contactNumber?.trim() || registerDto.phone,
+        storeLocation: registerDto.storeLocation?.trim() || undefined,
+        status: 'active',
+      });
+    }
 
     // Emit Kafka event
     if (this.kafkaService) {
@@ -119,8 +195,25 @@ export class UsersService {
     }
 
     if (user.isBanned) {
-      this.logger.warn(`Login failed - user is banned: ${loginDto.email}`);
-      throw new ForbiddenException(`Your account has been banned. Reason: ${user.banReason || 'No reason provided'}`);
+      // Check if banUntil is set and in the future
+      if (user.banUntil && new Date(user.banUntil) > new Date()) {
+        const until = new Date(user.banUntil);
+        const daysLeft = Math.ceil((until.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+        this.logger.warn(`Login failed - user is suspended until ${until.toISOString()}: ${loginDto.email}`);
+        throw new ForbiddenException(`Your account is suspended until ${until.toLocaleDateString()} (${daysLeft} day(s) left). Reason: ${user.banReason || 'No reason provided'}`);
+      } else {
+        // Ban expired, auto-unban
+        await this.userModel.findByIdAndUpdate(user._id, { $set: { isBanned: false, banReason: null, banUntil: null } });
+      }
+    }
+
+    if (loginDto.accountType === 'merchant' && user.accountType !== 'merchant') {
+      throw new UnauthorizedException('Merchant account not found for this email');
+    }
+
+    if (user.accountType === 'merchant' && user.role !== UserRole.ADMIN && user.role !== UserRole.MERCHANT) {
+      user.role = UserRole.MERCHANT;
+      await user.save();
     }
 
     // Auto-promote to admin if email matches config
@@ -164,10 +257,14 @@ export class UsersService {
 
     this.logger.log(`Login successful: ${user.email}`);
 
+    const merchantProfile = user.accountType === 'merchant'
+      ? await this.merchantModel.findOne({ userId: user._id.toString() }).lean().exec()
+      : null;
+
     return {
       accessToken,
       refreshToken,
-      user: this.toResponseDto(user),
+      user: this.toResponseDto(user, merchantProfile),
     };
   }
 
@@ -306,7 +403,22 @@ export class UsersService {
     if (!user) {
       throw new NotFoundException('User not found');
     }
-    return this.toResponseDto(user);
+    const merchantProfile = user.accountType === 'merchant'
+      ? await this.merchantModel.findOne({ userId: user._id.toString() }).lean().exec()
+      : null;
+    return this.toResponseDto(user, merchantProfile);
+  }
+
+  async getMerchantProfile(userId: string): Promise<any> {
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) throw new NotFoundException('User not found');
+    if (user.accountType !== 'merchant') {
+      throw new ForbiddenException('Merchant access required');
+    }
+
+    const merchant = await this.merchantModel.findOne({ userId: user._id.toString() }).lean().exec();
+    if (!merchant) throw new NotFoundException('Merchant profile not found');
+    return merchant;
   }
 
   async updateProfile(userId: string, updateData: any): Promise<UserResponseDto> {
@@ -506,12 +618,18 @@ export class UsersService {
     }
   }
 
-  async banUser(userId: string, reason: string, adminId: string, adminEmail: string): Promise<UserResponseDto> {
-    this.logger.log(`Admin banning user: ${userId}`);
-    
+  /**
+   * Ban a user for a given duration (in days). If duration is not provided, ban is permanent.
+   */
+  async banUser(userId: string, reason: string, adminId: string, adminEmail: string, durationDays?: number): Promise<UserResponseDto> {
+    this.logger.log(`Admin banning user: ${userId} for ${durationDays || 'permanent'} days`);
+    let banUntil: Date | null = null;
+    if (durationDays && durationDays > 0) {
+      banUntil = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
+    }
     const user = await this.userModel.findByIdAndUpdate(
       userId,
-      { $set: { isBanned: true, banReason: reason, updatedAt: new Date() } },
+      { $set: { isBanned: true, banReason: reason, banUntil: banUntil, updatedAt: new Date() } },
       { new: true }
     ).exec();
 
@@ -525,7 +643,7 @@ export class UsersService {
       adminEmail,
       targetId: userId,
       targetType: 'User',
-      details: { reason }
+      details: { reason, banUntil }
     });
 
     return this.toResponseDto(user);
@@ -533,10 +651,9 @@ export class UsersService {
 
   async unbanUser(userId: string, adminId: string, adminEmail: string): Promise<UserResponseDto> {
     this.logger.log(`Admin unbanning user: ${userId}`);
-    
     const user = await this.userModel.findByIdAndUpdate(
       userId,
-      { $set: { isBanned: false, banReason: null, updatedAt: new Date() } },
+      { $set: { isBanned: false, banReason: null, banUntil: null, updatedAt: new Date() } },
       { new: true }
     ).exec();
 
@@ -586,6 +703,96 @@ export class UsersService {
       pendingReports,
       totalAds,
       recentUsers: recentUsers.map(u => this.toResponseDto(u)),
+    };
+  }
+
+  async getDashboardStatsPublic(): Promise<any> {
+    this.logger.log('Fetching public dashboard stats');
+
+    const totalUsersPromise = this.userModel.countDocuments();
+    const activeMerchantsPromise = this.userModel.countDocuments({
+      role: UserRole.MERCHANT,
+      isBanned: { $ne: true },
+    });
+
+    const [totalUsers, activeMerchants] = await Promise.all([
+      totalUsersPromise,
+      activeMerchantsPromise,
+    ]);
+
+    let totalListings = 0;
+    let pendingApprovals = 0;
+    let overallReports = 0;
+
+    if (this.adsService) {
+      try {
+        const [adsCount, pendingReports, reportsCount] = await Promise.all([
+          this.adsService.getTotalAdsCount(),
+          this.adsService.getPendingReportsCount(),
+          this.adsService.getTotalReportsCount(),
+        ]);
+
+        totalListings = adsCount;
+        pendingApprovals = pendingReports;
+        overallReports = reportsCount;
+      } catch (error) {
+        this.logger.warn(`Failed to fetch ads dashboard stats: ${error.message}`);
+      }
+    }
+
+    let platformRevenue = 0;
+    if (this.paymentModel) {
+      try {
+        const revenueAgg = await this.paymentModel.aggregate([
+          {
+            $match: {
+              status: {
+                $in: [
+                  PaymentStatus.CREATED,
+                  PaymentStatus.AUTHORIZED,
+                  PaymentStatus.CAPTURED,
+                  PaymentStatus.PARTIALLY_REFUNDED,
+                ],
+              },
+            },
+          },
+          {
+            $project: {
+              grossInPaise: {
+                $ifNull: [
+                  '$amountInPaise',
+                  { $multiply: [{ $ifNull: ['$amount', 0] }, 100] },
+                ],
+              },
+              refundedInPaise: { $ifNull: ['$refundedAmountInPaise', 0] },
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              grossInPaise: { $sum: '$grossInPaise' },
+              refundedInPaise: { $sum: '$refundedInPaise' },
+            },
+          },
+        ]);
+
+        const grossInPaise = Number(revenueAgg?.[0]?.grossInPaise || 0);
+        const refundedInPaise = Number(revenueAgg?.[0]?.refundedInPaise || 0);
+        const netInPaise = Math.max(grossInPaise - refundedInPaise, 0);
+        platformRevenue = netInPaise / 100;
+      } catch (error) {
+        this.logger.warn(`Failed to fetch payment dashboard stats: ${error.message}`);
+      }
+    }
+
+    return {
+      totalUsers,
+      activeMerchants,
+      totalListings,
+      pendingApprovals,
+      overallReports,
+      platformRevenue,
+      updatedAt: new Date().toISOString(),
     };
   }
 
@@ -791,7 +998,116 @@ export class UsersService {
     }
 
     await this.userModel.findByIdAndUpdate(userId, { wishlist }).exec();
+
+    // Create notification for the ad owner when someone adds to wishlist
+    if (added && this.adsService) {
+      try {
+        const ad = await this.adsService.getAdById(adId);
+        const adOwnerId = (ad as any).userId?.toString();
+        if (adOwnerId && adOwnerId !== userId) {
+          await this.notificationModel.create({
+            recipientId: adOwnerId,
+            senderId: userId,
+            senderName: user.name,
+            adId,
+            adTitle: (ad as any).title || 'your ad',
+            type: 'wishlist_add',
+            message: `${user.name} wishlisted your ad "${(ad as any).title || 'your ad'}"`,
+            read: false,
+          });
+        }
+      } catch (err) {
+        this.logger.warn(`Failed to create wishlist notification: ${err.message}`);
+      }
+    }
+
     return { wishlist, added };
+  }
+
+  async getNotifications(userId: string, page = 1, limit = 20): Promise<{ notifications: any[]; unreadCount: number }> {
+    const skip = (page - 1) * limit;
+    const [notifications, unreadCount] = await Promise.all([
+      this.notificationModel
+        .find({ recipientId: userId })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean()
+        .exec(),
+      this.notificationModel.countDocuments({ recipientId: userId, read: false }),
+    ]);
+    return { notifications, unreadCount };
+  }
+
+  async markNotificationRead(notificationId: string, userId: string): Promise<void> {
+    await this.notificationModel.findOneAndUpdate(
+      { _id: notificationId, recipientId: userId },
+      { $set: { read: true } },
+    ).exec();
+  }
+
+  async markAllNotificationsRead(userId: string): Promise<void> {
+    await this.notificationModel.updateMany(
+      { recipientId: userId, read: false },
+      { $set: { read: true } },
+    ).exec();
+  }
+
+  async saveIWantPreference(
+    userId: string,
+    payload: { category: string; title?: string; description?: string },
+  ): Promise<any> {
+    const category = String(payload?.category || '').trim();
+    const title = String(payload?.title || '').trim();
+    const description = String(payload?.description || '').trim();
+
+    if (!category) {
+      throw new BadRequestException('Category is required');
+    }
+
+    if (!title && !description) {
+      throw new BadRequestException('Title or description is required');
+    }
+
+    const existingUser = await this.userModel.findById(userId).exec();
+    if (!existingUser) {
+      throw new NotFoundException('User not found');
+    }
+
+    const currentCreatedAt = existingUser.iWantPreference?.createdAt || new Date();
+
+    const user = await this.userModel
+      .findByIdAndUpdate(
+        userId,
+        {
+          $set: {
+            iWantPreference: {
+              category,
+              title,
+              description,
+              createdAt: currentCreatedAt,
+              updatedAt: new Date(),
+            },
+            updatedAt: new Date(),
+          },
+        },
+        { new: true },
+      )
+      .exec();
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    return user.iWantPreference;
+  }
+
+  async getIWantPreference(userId: string): Promise<any | null> {
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    return user.iWantPreference || null;
   }
 
   async getWishlistIds(userId: string): Promise<string[]> {
@@ -823,18 +1139,228 @@ export class UsersService {
     return ads;
   }
 
+  // ==================== USER REPORT METHODS ====================
+
+  async submitUserReport(
+    reportedUserId: string,
+    reporterUserId: string,
+    reason: string,
+    description?: string,
+    evidenceUrls?: string[],
+  ) {
+    try {
+      const reportedUser = await this.userModel.findById(reportedUserId);
+      if (!reportedUser) {
+        throw new NotFoundException('Reported user not found');
+      }
+
+      const reportId = `REP-USR-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+
+      const newReport = await this.userReportModel.create({
+        reportId,
+        reportedUserId,
+        reportedBy: reporterUserId,
+        reason,
+        description,
+        evidenceUrls,
+        status: 'pending',
+        priority: 0,
+      });
+
+      this.logger.log(`User report ${reportId} submitted by ${reporterUserId} against ${reportedUserId}`);
+
+      return {
+        reportId,
+        message: 'Report submitted successfully',
+        success: true,
+      };
+    } catch (error) {
+      this.logger.error(`Error submitting user report: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async getAllUserReports(limit = 50, skip = 0) {
+    try {
+      const reports = await this.userReportModel
+        .find()
+        .sort({ createdAt: -1 })
+        .limit(limit)
+        .skip(skip)
+        .lean();
+
+      const total = await this.userReportModel.countDocuments();
+
+      // Helper to map reason enum to label
+      const reasonLabels: Record<string, string> = {
+        harassment: 'Harassment',
+        abuse: 'Abuse',
+        fraud: 'Fraud',
+        scam: 'Scam',
+        fake_account: 'Fake Account',
+        spam: 'Spam',
+        other: 'Other',
+      };
+
+      // Fetch user names for reportedUserId and reportedBy
+      const userIds = Array.from(new Set([
+        ...reports.map((r: any) => r.reportedUserId),
+        ...reports.map((r: any) => r.reportedBy),
+      ].filter(Boolean)));
+
+      const users = await this.userModel.find({ _id: { $in: userIds } }).lean();
+      const userMap = new Map(users.map((u: any) => [u._id.toString(), u.name]));
+
+      const formattedReports = reports.map((report: any) => ({
+        id: report._id?.toString() || '',
+        reportId: report.reportId || '',
+        entity: userMap.get(report.reportedUserId) || `User ${report.reportedUserId?.slice(0, 8)}...`,
+        by: userMap.get(report.reportedBy) || `by ${report.reportedBy?.slice(0, 8) || 'Unknown User'}...`,
+        type: reasonLabels[report.reason] || 'Other',
+        priority: report.priority === 0 ? 'Medium' : 'High',
+        status: report.status || 'Pending',
+        createdAt: report.createdAt,
+      }));
+
+      return {
+        success: true,
+        data: formattedReports,
+        total,
+        limit,
+        skip,
+      };
+    } catch (error) {
+      this.logger.error(`Error fetching user reports: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async getUserReportById(reportId: string) {
+    try {
+      const report = await this.userReportModel.findOne({ reportId });
+
+      if (!report) {
+        throw new NotFoundException('Report not found');
+      }
+
+      const reportedUser = await this.userModel.findById(report.reportedUserId);
+
+      return {
+        success: true,
+        data: {
+          reportId: report.reportId,
+          reportedUser: {
+            id: reportedUser?._id?.toString(),
+            name: reportedUser?.name,
+            email: reportedUser?.email,
+          },
+          reason: report.reason,
+          description: report.description,
+          evidenceUrls: report.evidenceUrls || [],
+          status: report.status,
+          priority: report.priority,
+          createdAt: report.createdAt,
+        },
+      };
+    } catch (error) {
+      this.logger.error(`Error fetching report: ${error.message}`);
+      throw error;
+    }
+  }
+
   // ==================== HELPER METHODS ====================
 
-  private toResponseDto(user: UserDocument): UserResponseDto {
+  async getUsersByRole(role: string, page: number = 1, limit: number = 10, kycStatus?: string): Promise<{ users: any[]; total: number }> {
+    this.logger.log(`Getting users by role: ${role}, page: ${page}, limit: ${limit}, kycStatus: ${kycStatus}`);
+    
+    const query: any = { role };
+    if (kycStatus) {
+      query.kycStatus = kycStatus;
+    }
+
+    const [users, total] = await Promise.all([
+      this.userModel
+        .find(query)
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean()
+        .exec(),
+      this.userModel.countDocuments(query),
+    ]);
+
+    return {
+      users: users.map((user: any) => ({
+        id: user._id.toString(),
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        kycStatus: user.kycStatus || 'Pending',
+        city: user.profile?.city || '',
+        joinedDate: user.createdAt,
+        status: user.isBanned ? 'Suspended' : 'Active',
+        isBanned: user.isBanned,
+      })),
+      total,
+    };
+  }
+
+  async updateUserKycStatus(userId: string, kycStatus: string, rejectionReason?: string, adminId?: string, adminEmail?: string): Promise<any> {
+    this.logger.log(`Updating KYC status for user ${userId}: ${kycStatus}`);
+
+    const user = await this.userModel.findById(userId);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    user.kycStatus = kycStatus;
+    if (rejectionReason && kycStatus === 'Rejected') {
+      user.kycRejectionReason = rejectionReason;
+    }
+
+    await user.save();
+
+    // Log audit if audit service available
+    if (this.auditLogsService) {
+      try {
+        await this.auditLogsService.log({
+          action: `Updated KYC status to ${kycStatus}`,
+          adminId,
+          adminEmail: adminEmail || 'unknown',
+          targetId: userId,
+          targetType: 'User',
+          details: { previousStatus: user.kycStatus, newStatus: kycStatus, rejectionReason },
+        });
+      } catch (err) {
+        this.logger.warn(`Failed to log KYC update: ${err.message}`);
+      }
+    }
+
     return {
       id: user._id.toString(),
       name: user.name,
       email: user.email,
-      role: user.role,
+      kycStatus: user.kycStatus,
+      kycRejectionReason: user.kycRejectionReason,
+    };
+  }
+
+  private toResponseDto(user: UserDocument, merchantProfile: any = null): UserResponseDto {
+    const normalizedRole = user.role === UserRole.ADMIN
+      ? UserRole.ADMIN
+      : (user.accountType === 'merchant' ? UserRole.MERCHANT : user.role || UserRole.USER);
+
+    return {
+      id: user._id.toString(),
+      name: user.name,
+      email: user.email,
+      role: normalizedRole,
+      accountType: user.accountType || 'user',
       isBanned: user.isBanned || false,
       banReason: user.banReason,
       isEmailVerified: user.isEmailVerified || false,
       profile: user.profile || {},
+      merchantProfile,
+      iWantPreference: user.iWantPreference || null,
       createdAt: user.createdAt,
     };
   }

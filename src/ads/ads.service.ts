@@ -1,3 +1,4 @@
+// ...existing code...
 import {
   Injectable,
   Logger,
@@ -26,6 +27,216 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 @Injectable()
 export class AdsService implements OnModuleInit, OnModuleDestroy {
+
+  /**
+   * Get a single report by reportId, with ad and merchant enrichment
+   */
+  async getReportByReportId(reportId: string): Promise<any | null> {
+    try {
+      this.logger.log(`Fetching enriched report for reportId: ${reportId}`);
+      const results = await this.reportModel.aggregate([
+        { $match: { reportId } },
+        {
+          $lookup: {
+            from: 'ads',
+            localField: 'adId',
+            foreignField: 'adId',
+            as: 'ad',
+          },
+        },
+        { $unwind: { path: '$ad', preserveNullAndEmptyArrays: true } },
+        {
+          $addFields: {
+            adUserObjectId: {
+              $cond: [
+                { $regexMatch: { input: '$ad.userId', regex: /^[0-9a-fA-F]{24}$/ } },
+                { $toObjectId: '$ad.userId' },
+                null
+              ]
+            },
+            adUserIdString: '$ad.userId'
+          }
+        },
+        {
+          $lookup: {
+            from: 'users',
+            let: { adUserObjectId: '$adUserObjectId' },
+            pipeline: [
+              { $match: { $expr: { $eq: ['$_id', '$$adUserObjectId'] } } },
+            ],
+            as: 'uploader',
+          },
+        },
+        { $unwind: { path: '$uploader', preserveNullAndEmptyArrays: true } },
+        // Always set uploader.userId from uploader._id if uploader exists
+        {
+          $addFields: {
+            'uploader.userId': {
+              $cond: [
+                { $ifNull: ['$uploader._id', false] },
+                { $toString: '$uploader._id' },
+                '$uploader.userId'
+              ]
+            }
+          }
+        },
+        {
+          $lookup: {
+            from: 'ads',
+            let: { uploaderUserId: '$uploader._id' },
+            pipeline: [
+              { $match: { $expr: { $and: [ { $eq: [ { $toObjectId: '$userId' }, '$$uploaderUserId' ] }, { $eq: ['$status', 'active'] } ] } } },
+            ],
+            as: 'uploaderActiveAds',
+          },
+        },
+        {
+          $addFields: {
+            uploader: {
+              $cond: [
+                { $ifNull: ['$uploader.userId', false] },
+                '$uploader',
+                {
+                  $cond: [
+                    { $and: [
+                      { $ifNull: ['$adUserIdString', false] },
+                      { $regexMatch: { input: '$adUserIdString', regex: /^[0-9a-fA-F]{24}$/ } }
+                    ] },
+                    {
+                      $let: {
+                        vars: { fallbackUserId: { $toObjectId: '$adUserIdString' } },
+                        in: {
+                          $mergeObjects: [
+                            { name: 'No user info', accountType: '-', role: '-', email: '-', userId: '$adUserIdString' },
+                            {
+                              $arrayElemAt: [
+                                {
+                                  $map: {
+                                    input: {
+                                      $filter: {
+                                        input: '$$ROOT',
+                                        as: 'root',
+                                        cond: { $eq: ['$$root._id', '$$fallbackUserId'] }
+                                      }
+                                    },
+                                    as: 'user',
+                                    in: {
+                                      name: '$$user.name',
+                                      accountType: '$$user.accountType',
+                                      role: '$$user.role',
+                                      email: '$$user.email',
+                                      userId: { $toString: '$$user._id' }
+                                    }
+                                  }
+                                },
+                                0
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    { name: 'No user info', accountType: '-', role: '-', email: '-', userId: '-' }
+                  ]
+                }
+              ]
+            },
+            uploaderListingCount: { $size: { $ifNull: ['$uploaderActiveAds', []] } },
+          },
+        },
+        {
+          $project: {
+            reportId: 1,
+            adId: 1,
+            reportedBy: 1,
+            reason: 1,
+            description: 1,
+            status: 1,
+            adminNotes: 1,
+            createdAt: 1,
+            reviewedAt: 1,
+            // Ad details
+            'ad.title': 1,
+            'ad.price': 1,
+            'ad.category': 1,
+            'ad.subCategory': 1,
+            'ad.images': 1,
+            'ad.status': 1,
+            'ad.reportCount': 1,
+            'ad.userId': 1,
+            // Uploader details
+            'uploader.name': 1,
+            'uploader.accountType': 1,
+            'uploader.role': 1,
+            'uploader.email': 1,
+            'uploader.userId': 1,
+            uploaderListingCount: 1,
+          },
+        },
+      ]);
+      let result = results[0] || null;
+      // Always ensure uploader.userId is present if uploader exists
+      if (result && result.uploader && !result.uploader.userId && result.uploader.email) {
+        if (result.ad && result.ad.userId) {
+          // Try to use ad.userId if uploader is the ad owner
+          result.uploader.userId = result.ad.userId;
+        } else if (result.uploader._id) {
+          // Fallback: use uploader._id if present
+          result.uploader.userId = result.uploader._id.toString();
+        }
+      }
+      // FINAL fallback: if uploader.userId is missing or '-', try direct query
+      if (result && (!result.uploader || !result.uploader.userId || result.uploader.userId === '-' || result.uploader.name === 'No user info')) {
+        // Try to fetch user by ad.userId directly
+        const adUserId = result.ad && result.ad.userId ? result.ad.userId : null;
+        if (adUserId && /^[0-9a-fA-F]{24}$/.test(adUserId)) {
+          const userDoc = await this.userModel.findById(adUserId).lean();
+          if (userDoc) {
+            result.uploader = {
+              name: userDoc.name,
+              accountType: userDoc.accountType,
+              role: userDoc.role,
+              email: userDoc.email,
+              userId: userDoc._id.toString(),
+            };
+          }
+        }
+      }
+      return result;
+    } catch (error: any) {
+      this.logger.error(`Error fetching enriched report: ${error.message}`);
+      throw error;
+    }
+  }
+
+    /**
+     * Get real-time report stats for admin panel cards
+     */
+    public async getReportStats() {
+      const [
+        total,
+        pending,
+        reviewed,
+        actionTaken,
+        policyViolations,
+        resolved24h
+      ] = await Promise.all([
+        this.reportModel.countDocuments(),
+        this.reportModel.countDocuments({ status: 'pending' }),
+        this.reportModel.countDocuments({ status: 'reviewed' }),
+        this.reportModel.countDocuments({ status: 'action_taken' }),
+        this.reportModel.countDocuments({ reason: 'policy_violation' }),
+        this.reportModel.countDocuments({ status: 'action_taken', reviewedAt: { $gte: new Date(Date.now() - 24*60*60*1000) } }),
+      ]);
+      return {
+        total,
+        pending,
+        reviewed,
+        actionTaken,
+        policyViolations,
+        resolved24h
+      };
+    }
   private readonly logger = new Logger(AdsService.name);
   private emailTransporter: any;
   private emailEnabled: boolean;
@@ -314,9 +525,22 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
 
     this.validateCategoryData(createAdDto.category, categorySpecificData);
 
-    const expiryDate =
-      createAdDto.expiryDate ||
-      new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    // If the user selected specific scheduling dates, expire the ad at the end
+    // of the last chosen day. Otherwise, fall back to an explicit expiryDate or
+    // the default 30-day window.
+    const expiryDate = (() => {
+      if (createAdDto.selectedDates && createAdDto.selectedDates.length > 0) {
+        const lastDate = new Date(
+          Math.max(...createAdDto.selectedDates.map((d) => new Date(d).getTime())),
+        );
+        lastDate.setHours(23, 59, 59, 999);
+        return lastDate;
+      }
+      return (
+        createAdDto.expiryDate ||
+        new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+      );
+    })();
 
     const adData: any = {
       ...createAdDto,
@@ -474,7 +698,19 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
     const mongoQuery: any = { status: 'active' };
 
     if (filters?.category) mongoQuery.category = filters.category;
-    if (filters?.location) mongoQuery.location = filters.location;
+    if (filters?.location && String(filters.location).trim()) {
+      const normalizedLocation = String(filters.location).trim();
+      const escapedLocation = normalizedLocation.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const locationRegex = new RegExp(escapedLocation, 'i');
+
+      mongoQuery.$or = [
+        { location: locationRegex },
+        { city: locationRegex },
+        { state: locationRegex },
+        { pincode: locationRegex },
+        { cities: { $elemMatch: { $regex: locationRegex } } },
+      ];
+    }
     if (typeof filters?.minPrice === 'number') mongoQuery.price = { ...(mongoQuery.price || {}), $gte: filters.minPrice };
     if (typeof filters?.maxPrice === 'number') mongoQuery.price = { ...(mongoQuery.price || {}), $lte: filters.maxPrice };
 
@@ -903,10 +1139,25 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
+    const currentEditCount = typeof (ad as any).editCount === 'number' ? (ad as any).editCount : 0;
+    const hasUsedEdit = Boolean((ad as any).hasUsedEdit) || currentEditCount >= 1;
+
+    if (hasUsedEdit) {
+      throw new ForbiddenException('You can edit an ad only once');
+    }
+
     const updatedAd = await this.adModel
       .findOneAndUpdate(
         { adId },
-        { $set: { ...updateData, updatedAt: new Date() } },
+        {
+          $set: {
+            ...updateData,
+            updatedAt: new Date(),
+            hasUsedEdit: true,
+            editedAt: new Date(),
+          },
+          $inc: { editCount: 1 },
+        },
         { new: true },
       )
       .exec();
@@ -1169,17 +1420,96 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
    */
   async getAdReports(adId: string): Promise<any[]> {
     try {
-      this.logger.log(`Fetching reports for ad: ${adId}`);
+      this.logger.log(`Fetching enriched reports for ad: ${adId}`);
 
-      const reports = await this.reportModel
-        .find({ adId })
-        .sort({ createdAt: -1 })
-        .lean()
-        .exec();
+      const reports = await this.reportModel.aggregate([
+        { $match: { adId } },
+        { $lookup: {
+            from: 'ads',
+            localField: 'adId',
+            foreignField: 'adId',
+            as: 'ad',
+        }},
+        { $unwind: { path: '$ad', preserveNullAndEmptyArrays: true } },
+        // Convert ad.userId (string) to ObjectId for user lookup
+        { $addFields: {
+            adUserObjectId: {
+              $cond: [
+                { $regexMatch: { input: '$ad.userId', regex: /^[0-9a-fA-F]{24}$/ } },
+                { $toObjectId: '$ad.userId' },
+                null
+              ]
+            },
+            adUserIdString: '$ad.userId'
+        }},
+        // Lookup uploader (user or merchant) by _id
+        { $lookup: {
+            from: 'users',
+            let: { adUserObjectId: '$adUserObjectId' },
+            pipeline: [
+              { $match: { $expr: { $eq: ['$_id', '$$adUserObjectId'] } } },
+            ],
+            as: 'uploader',
+        }},
+        { $unwind: { path: '$uploader', preserveNullAndEmptyArrays: true } },
+        // Lookup all active ads for this uploader to count listings
+        { $lookup: {
+            from: 'ads',
+            let: { uploaderUserId: '$uploader._id' },
+            pipeline: [
+              { $match: { $expr: { $and: [ { $eq: [ { $toObjectId: '$userId' }, '$$uploaderUserId' ] }, { $eq: ['$status', 'active'] } ] } } },
+            ],
+            as: 'uploaderActiveAds',
+        }},
+        { $addFields: {
+            uploader: {
+              $cond: [
+                { $ifNull: ['$uploader.userId', false] },
+                '$uploader',
+                {
+                  $cond: [
+                    { $ifNull: ['$adUserIdString', false] },
+                    { name: 'No user info', accountType: '-', role: '-', email: '-', userId: '$adUserIdString' },
+                    { name: 'No user info', accountType: '-', role: '-', email: '-', userId: '-' }
+                  ]
+                }
+              ]
+            },
+            uploaderListingCount: { $size: { $ifNull: ['$uploaderActiveAds', []] } },
+        }},
+        { $project: {
+            reportId: 1,
+            adId: 1,
+            reportedBy: 1,
+            reason: 1,
+            description: 1,
+            status: 1,
+            adminNotes: 1,
+            createdAt: 1,
+            reviewedAt: 1,
+            // Ad details
+            'ad.title': 1,
+            'ad.price': 1,
+            'ad.category': 1,
+            'ad.subCategory': 1,
+            'ad.images': 1,
+            'ad.status': 1,
+            'ad.reportCount': 1,
+            'ad.userId': 1,
+            // Uploader details
+            'uploader.name': 1,
+            'uploader.accountType': 1,
+            'uploader.role': 1,
+            'uploader.email': 1,
+            'uploader.userId': 1,
+            uploaderListingCount: 1,
+        }},
+        { $sort: { createdAt: -1 } },
+      ]);
 
       return reports;
     } catch (error: any) {
-      this.logger.error(`Error fetching reports: ${error.message}`);
+      this.logger.error(`Error fetching enriched reports: ${error.message}`);
       throw error;
     }
   }
@@ -1201,25 +1531,16 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
       }
 
       const reports = await this.reportModel.aggregate([
-        {
-          $match: {}, // Match ALL reports (no status filter)
-        },
-        {
-          $lookup: {
+        { $match: {} },
+        { $lookup: {
             from: 'ads',
             localField: 'adId',
             foreignField: 'adId',
             as: 'ad',
-          },
-        },
-        {
-          $unwind: {
-            path: '$ad',
-            preserveNullAndEmptyArrays: true, // Keep reports even if ad is deleted
-          },
-        },
-        {
-          $project: {
+        }},
+        { $unwind: { path: '$ad', preserveNullAndEmptyArrays: false } }, // Only keep if ad exists
+        { $match: { 'ad.status': { $nin: ['deleted', 'hidden'] } } }, // Exclude deleted/hidden ads
+        { $project: {
             reportId: 1,
             adId: 1,
             reportedBy: 1,
@@ -1232,14 +1553,11 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
             'ad.title': 1,
             'ad.status': 1,
             'ad.reportCount': 1,
-          },
-        },
-        {
-          $sort: { createdAt: -1 },
-        },
+        }},
+        { $sort: { createdAt: -1 } },
       ]);
 
-      this.logger.log(`✅ Successfully fetched ${reports.length} reports with ad details`);
+      this.logger.log(`✅ Successfully fetched ${reports.length} reports with ad details (excluding deleted/hidden/missing ads)`);
       return reports;
     } catch (error: any) {
       this.logger.error(`❌ Error fetching reports: ${error.message}`, error.stack);
@@ -1511,6 +1829,124 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
 
   async getTotalAdsCount(): Promise<number> {
     return this.adModel.countDocuments();
+  }
+
+  async getTotalReportsCount(): Promise<number> {
+    return this.reportModel.countDocuments();
+  }
+
+  async getCategoryManagementPublic(limit = 12): Promise<{
+    summary: {
+      totalCategories: number;
+      activeCategories: number;
+      subcategories: number;
+      disabledHidden: number;
+    };
+    tree: Array<{ label: string; products: string[] }>;
+    rows: Array<{
+      name: string;
+      parent: string;
+      listings: number;
+      status: 'Active' | 'Hidden';
+      lastUpdated: string;
+    }>;
+    totalRows: number;
+    updatedAt: string;
+  }> {
+    const safeLimit = Math.max(1, Math.min(100, Number(limit) || 12));
+
+    const [
+      categoryValues,
+      activeCategoryValues,
+      subcategoryValues,
+      treeAgg,
+      listAgg,
+      totalRowsAgg,
+    ] = await Promise.all([
+      this.adModel.distinct('category').exec(),
+      this.adModel.distinct('category', { status: 'active' }).exec(),
+      this.adModel.distinct('subCategory').exec(),
+      this.adModel.aggregate([
+        {
+          $group: {
+            _id: '$category',
+            listings: { $sum: 1 },
+            products: { $addToSet: '$subCategory' },
+          },
+        },
+        { $sort: { listings: -1 } },
+        { $limit: 6 },
+        {
+          $project: {
+            _id: 0,
+            label: '$_id',
+            products: { $slice: ['$products', 8] },
+          },
+        },
+      ]).exec(),
+      this.adModel.aggregate([
+        {
+          $group: {
+            _id: {
+              category: '$category',
+              subCategory: '$subCategory',
+            },
+            listings: { $sum: 1 },
+            activeListings: {
+              $sum: {
+                $cond: [{ $eq: ['$status', 'active'] }, 1, 0],
+              },
+            },
+            lastUpdated: { $max: '$updatedAt' },
+          },
+        },
+        { $sort: { listings: -1 } },
+        { $limit: safeLimit },
+        {
+          $project: {
+            _id: 0,
+            name: '$_id.subCategory',
+            parent: '$_id.category',
+            listings: 1,
+            status: {
+              $cond: [{ $gt: ['$activeListings', 0] }, 'Active', 'Hidden'],
+            },
+            lastUpdated: {
+              $ifNull: ['$lastUpdated', new Date()],
+            },
+          },
+        },
+      ]).exec(),
+      this.adModel.aggregate([
+        {
+          $group: {
+            _id: {
+              category: '$category',
+              subCategory: '$subCategory',
+            },
+          },
+        },
+        { $count: 'total' },
+      ]).exec(),
+    ]);
+
+    const totalCategories = (categoryValues || []).filter(Boolean).length;
+    const activeCategories = (activeCategoryValues || []).filter(Boolean).length;
+    const subcategories = (subcategoryValues || []).filter(Boolean).length;
+    const disabledHidden = Math.max(totalCategories - activeCategories, 0);
+
+    return {
+      summary: {
+        totalCategories,
+        activeCategories,
+        subcategories,
+        disabledHidden,
+      },
+      tree: Array.isArray(treeAgg) ? treeAgg : [],
+      rows: Array.isArray(listAgg) ? listAgg : [],
+      totalRows: totalRowsAgg?.[0]?.total || 0,
+      updatedAt: new Date().toISOString(),
+    };
   }
 
   /* ============================================================
