@@ -20,6 +20,6 @@ feature-validation:
   artifacts:
     paths:
       - node_modules/
-    expire_in: 1 month
+    expire_in: 3 month
   rules:
     - when: always
