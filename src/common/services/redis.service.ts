@@ -65,7 +65,10 @@ export class RedisService implements OnModuleInit {
     }
 
     try {
-      const ttl = ttlSeconds || Number(this.configService.get('REDIS_CACHE_TTL_DEFAULT')) || 300;
+      const ttl =
+        ttlSeconds ||
+        Number(this.configService.get('REDIS_CACHE_TTL_DEFAULT')) ||
+        300;
       await this.redisClient.setex(key, ttl, JSON.stringify(value));
       this.logger.debug(`Cache SET: ${key} (TTL: ${ttl}s)`);
       return true;
@@ -129,10 +132,14 @@ export class RedisService implements OnModuleInit {
         return 0;
       }
       await this.redisClient.del(...keys);
-      this.logger.debug(`Cache DEL pattern ${pattern}: deleted ${keys.length} keys`);
+      this.logger.debug(
+        `Cache DEL pattern ${pattern}: deleted ${keys.length} keys`,
+      );
       return keys.length;
     } catch (error: any) {
-      this.logger.error(`Cache DEL pattern failed for ${pattern}: ${error.message}`);
+      this.logger.error(
+        `Cache DEL pattern failed for ${pattern}: ${error.message}`,
+      );
       return 0;
     }
   }

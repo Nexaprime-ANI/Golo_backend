@@ -6,7 +6,10 @@ import { CallsController } from './calls.controller';
 import { CallsService } from './calls.service';
 import { CallsGateway } from './calls.gateway';
 import { Call, CallSchema } from './schemas/call.schema';
-import { Conversation, ConversationSchema } from '../chats/schemas/conversation.schema';
+import {
+  Conversation,
+  ConversationSchema,
+} from '../chats/schemas/conversation.schema';
 import { Message, MessageSchema } from '../chats/schemas/message.schema';
 
 @Module({

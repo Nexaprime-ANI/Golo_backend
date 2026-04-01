@@ -62,4 +62,4 @@ const logger = new Logger('MongoDB');
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule { }
+export class AppModule {}

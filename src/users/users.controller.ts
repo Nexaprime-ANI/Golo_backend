@@ -1,7 +1,19 @@
-import { 
-  Controller, Post, Body, Get, Put, Delete, Param, 
-  UseGuards, Query, Ip, NotFoundException 
+import {
+  Controller,
+  Post,
+  Body,
+  Get,
+  Put,
+  Delete,
+  Param,
+  UseGuards,
+  Query,
+  Ip,
+  NotFoundException,
+  BadRequestException,
+  Logger,
 } from '@nestjs/common';
+import { isValidObjectId } from 'mongoose';
 
 import { UsersService } from './users.service';
 import { RegisterDto } from './dto/register.dto';
@@ -17,6 +29,7 @@ import { UserRole } from './schemas/user.schema';
 
 @Controller('users')
 export class UsersController {
+  private readonly logger = new Logger(UsersController.name);
 
   constructor(private readonly usersService: UsersService) {}
 
@@ -25,22 +38,62 @@ export class UsersController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
   async adminGetAllManagers() {
-    return { success: true, data: await this.usersService.adminGetAllManagers() };
+    return {
+      success: true,
+      data: await this.usersService.adminGetAllManagers(),
+    };
+  }
+
+  @Get('admin/service-providers')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async adminGetAllServiceProviders(@Query('page') page = '1', @Query('limit') limit = '100') {
+    const p = parseInt(String(page), 10) || 1;
+    const l = parseInt(String(limit), 10) || 100;
+    const result = await this.usersService.getUsersByRole(UserRole.MERCHANT, p, l);
+    return { success: true, data: result.users, total: result.total };
   }
 
   @Post('admin/managers')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
-  async adminCreateManager(@Body() dto: RegisterDto, @CurrentUser() admin: any) {
-    const manager = await this.usersService.adminCreateManager(dto, admin.id, admin.email);
+  async adminCreateManager(
+    @Body() dto: RegisterDto,
+    @CurrentUser() admin: any,
+  ) {
+    const manager = await this.usersService.adminCreateManager(
+      dto,
+      admin.id,
+      admin.email,
+    );
     return { success: true, data: manager };
   }
 
   @Put('admin/managers/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
-  async adminUpdateManager(@Param('id') id: string, @Body() dto: any, @CurrentUser() admin: any) {
-    const manager = await this.usersService.adminUpdateManager(id, dto, admin.id, admin.email);
+  async adminUpdateManager(
+    @Param('id') id: string,
+    @Body() dto: any,
+    @CurrentUser() admin: any,
+  ) {
+    let rawId = String(id ?? '');
+    try {
+      rawId = decodeURIComponent(rawId);
+    } catch (e) {
+      // ignore decode errors
+    }
+    rawId = rawId.trim().replace(/^\/+|\/+$/g, '');
+    this.logger.debug(`adminUpdateManager called with rawId="${rawId}" (type=${typeof rawId}, len=${rawId.length})`);
+    if (!rawId || !isValidObjectId(rawId)) {
+      throw new BadRequestException('Invalid manager id');
+    }
+    const manager = await this.usersService.adminUpdateManager(
+      rawId,
+      dto,
+      admin.id,
+      admin.email,
+    );
     return { success: true, data: manager };
   }
 
@@ -48,15 +101,40 @@ export class UsersController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
   async adminDeleteManager(@Param('id') id: string, @CurrentUser() admin: any) {
-    await this.usersService.adminDeleteManager(id, admin.id, admin.email);
+    let rawId = String(id ?? '');
+    try {
+      rawId = decodeURIComponent(rawId);
+    } catch (e) {
+      // ignore decode errors
+    }
+    rawId = rawId.trim().replace(/^\/+|\/+$/g, '');
+    this.logger.debug(`adminDeleteManager called with rawId="${rawId}" (type=${typeof rawId}, len=${rawId.length})`);
+    if (!rawId || !isValidObjectId(rawId)) {
+      throw new BadRequestException('Invalid manager id');
+    }
+    await this.usersService.adminDeleteManager(rawId, admin.id, admin.email);
     return { success: true };
   }
 
   @Post('admin/managers/:id/discard')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
-  async adminDiscardManager(@Param('id') id: string, @CurrentUser() admin: any) {
-    await this.usersService.adminDiscardManager(id, admin.id, admin.email);
+  async adminDiscardManager(
+    @Param('id') id: string,
+    @CurrentUser() admin: any,
+  ) {
+    let rawId = String(id ?? '');
+    try {
+      rawId = decodeURIComponent(rawId);
+    } catch (e) {
+      // ignore decode errors
+    }
+    rawId = rawId.trim().replace(/^\/+|\/+$/g, '');
+    this.logger.debug(`adminDiscardManager called with rawId="${rawId}" (type=${typeof rawId}, len=${rawId.length})`);
+    if (!rawId || !isValidObjectId(rawId)) {
+      throw new BadRequestException('Invalid manager id');
+    }
+    await this.usersService.adminDiscardManager(rawId, admin.id, admin.email);
     return { success: true };
   }
 
@@ -66,7 +144,8 @@ export class UsersController {
   async reportUser(
     @Param('id') id: string,
     @CurrentUser() reporter: any,
-    @Body() body: { reason: string; description?: string; evidenceUrls?: string[] }
+    @Body()
+    body: { reason: string; description?: string; evidenceUrls?: string[] },
   ) {
     const { reason, description, evidenceUrls } = body;
     const reporterId = reporter?.id || reporter?._id;
@@ -86,10 +165,7 @@ export class UsersController {
   @Post('admin/users/:id/unban')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
-  async unbanUser(
-    @Param('id') id: string,
-    @CurrentUser() admin: any,
-  ) {
+  async unbanUser(@Param('id') id: string, @CurrentUser() admin: any) {
     const user = await this.usersService.unbanUser(id, admin.id, admin.email);
     return { success: true, data: user };
   }
@@ -98,7 +174,11 @@ export class UsersController {
   @Post('register')
   async register(@Body() dto: RegisterDto, @Ip() ip: string) {
     const user = await this.usersService.register(dto);
-    return { success: true, message: 'User registered successfully', data: user };
+    return {
+      success: true,
+      message: 'User registered successfully',
+      data: user,
+    };
   }
 
   @Post('login')
@@ -151,7 +231,11 @@ export class UsersController {
   @UseGuards(JwtAuthGuard)
   async updateProfile(@CurrentUser() user: any, @Body() data: any) {
     const profile = await this.usersService.updateProfile(user.id, data);
-    return { success: true, message: 'Profile updated successfully', data: profile };
+    return {
+      success: true,
+      message: 'Profile updated successfully',
+      data: profile,
+    };
   }
 
   // ==================== PASSWORD OTP ====================
@@ -165,14 +249,21 @@ export class UsersController {
   @Post('verify-password-otp')
   @UseGuards(JwtAuthGuard)
   async verifyOTP(@CurrentUser() user: any, @Body() body: any) {
-    const result = await this.usersService.verifyPasswordChangeOTP(user.id, body.otp);
+    const result = await this.usersService.verifyPasswordChangeOTP(
+      user.id,
+      body.otp,
+    );
     return { success: true, message: 'OTP verified', data: result };
   }
 
   @Post('change-password-otp')
   @UseGuards(JwtAuthGuard)
   async changePassword(@CurrentUser() user: any, @Body() body: any) {
-    const result = await this.usersService.changePasswordWithOTP(user.id, body.otp, body.newPassword);
+    const result = await this.usersService.changePasswordWithOTP(
+      user.id,
+      body.otp,
+      body.newPassword,
+    );
     return { success: true, message: 'Password changed', data: result };
   }
 
@@ -180,26 +271,38 @@ export class UsersController {
   @Get('wishlist')
   @UseGuards(JwtAuthGuard)
   async getWishlist(@CurrentUser() user: any) {
-    return { success: true, data: await this.usersService.getWishlistAds(user.id) };
+    return {
+      success: true,
+      data: await this.usersService.getWishlistAds(user.id),
+    };
   }
 
   @Get('wishlist/ids')
   @UseGuards(JwtAuthGuard)
   async getWishlistIds(@CurrentUser() user: any) {
-    return { success: true, data: await this.usersService.getWishlistIds(user.id) };
+    return {
+      success: true,
+      data: await this.usersService.getWishlistIds(user.id),
+    };
   }
 
   @Post('wishlist/:adId')
   @UseGuards(JwtAuthGuard)
   async toggleWishlist(@CurrentUser() user: any, @Param('adId') adId: string) {
-    return { success: true, data: await this.usersService.toggleWishlist(user.id, adId) };
+    return {
+      success: true,
+      data: await this.usersService.toggleWishlist(user.id, adId),
+    };
   }
 
   // ==================== NOTIFICATIONS ====================
   @Get('notifications')
   @UseGuards(JwtAuthGuard)
   async getNotifications(@CurrentUser() user: any) {
-    return { success: true, data: await this.usersService.getNotifications(user.id) };
+    return {
+      success: true,
+      data: await this.usersService.getNotifications(user.id),
+    };
   }
 
   // ==================== ADMIN ====================

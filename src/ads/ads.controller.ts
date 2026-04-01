@@ -1,7 +1,20 @@
 // ...existing code...
 import {
-  Controller, Get, Post, Put, Delete, Body, Param, Query,
-  UsePipes, ValidationPipe, Logger, HttpCode, HttpStatus, UseGuards, Request
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Body,
+  Param,
+  Query,
+  UsePipes,
+  ValidationPipe,
+  Logger,
+  HttpCode,
+  HttpStatus,
+  UseGuards,
+  Request,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -20,26 +33,26 @@ import { Optional } from '@nestjs/common';
 
 @Controller('ads')
 export class AdsController {
-    /**
-     * Admin: Get real-time listing report stats for admin panel cards
-     */
-    @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles(UserRole.ADMIN)
-    @Get('reports/stats')
-    async getListingReportStats() {
-      // Real-time stats for admin panel cards
-      const stats = await this.adsService.getReportStats();
-      return {
-        success: true,
-        data: stats
-      };
-    }
+  /**
+   * Admin: Get real-time listing report stats for admin panel cards
+   */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @Get('reports/stats')
+  async getListingReportStats() {
+    // Real-time stats for admin panel cards
+    const stats = await this.adsService.getReportStats();
+    return {
+      success: true,
+      data: stats,
+    };
+  }
   private readonly logger = new Logger(AdsController.name);
 
   constructor(
     private readonly adsService: AdsService,
-    @Optional() private readonly kafkaService?: KafkaService
-  ) { }
+    @Optional() private readonly kafkaService?: KafkaService,
+  ) {}
 
   // ==================== PUBLIC ROUTES (No Auth Required) ====================
 
@@ -52,17 +65,17 @@ export class AdsController {
     @Query('limit') limit: string = '10',
     @Query('category') category?: string,
     @Query('sortBy') sortBy?: string,
-    @Query('sortOrder') sortOrder?: string
+    @Query('sortOrder') sortOrder?: string,
   ) {
     const pageNum = parseInt(page, 10);
     const limitNum = parseInt(limit, 10);
-    
+
     // Generate cache key
     const cacheKey = this.adsService.getCacheKey(
       'ads:homepage',
       pageNum,
       limitNum,
-      category || 'all'
+      category || 'all',
     );
 
     // Try cache first
@@ -81,10 +94,17 @@ export class AdsController {
           pageNum,
           limitNum,
           sortBy || 'createdAt',
-          sortOrder || 'desc'
+          sortOrder || 'desc',
         );
       } else {
-        result = await this.adsService.searchAds('', {}, pageNum, limitNum, sortBy || 'createdAt', sortOrder || 'desc');
+        result = await this.adsService.searchAds(
+          '',
+          {},
+          pageNum,
+          limitNum,
+          sortBy || 'createdAt',
+          sortOrder || 'desc',
+        );
       }
 
       const response = {
@@ -94,9 +114,9 @@ export class AdsController {
           total: result.total,
           page: pageNum,
           limit: limitNum,
-          pages: Math.ceil(result.total / limitNum)
+          pages: Math.ceil(result.total / limitNum),
         },
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
 
       // Cache for 5 minutes
@@ -109,7 +129,7 @@ export class AdsController {
         success: false,
         message: 'Failed to get ads',
         error: error.message,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     }
   }
@@ -129,9 +149,11 @@ export class AdsController {
     @Query('lat') lat?: string,
     @Query('lng') lng?: string,
     @Query('page') page: string = '1',
-    @Query('limit') limit: string = '10'
+    @Query('limit') limit: string = '10',
   ) {
-    this.logger.log(`REST: Searching ads with query: ${query}, sortBy: ${sortBy}`);
+    this.logger.log(
+      `REST: Searching ads with query: ${query}, sortBy: ${sortBy}`,
+    );
 
     try {
       const pageNum = parseInt(page, 10);
@@ -143,7 +165,7 @@ export class AdsController {
         category,
         location,
         minPrice: minPrice ? parseInt(minPrice, 10) : undefined,
-        maxPrice: maxPrice ? parseInt(maxPrice, 10) : undefined
+        maxPrice: maxPrice ? parseInt(maxPrice, 10) : undefined,
       };
 
       const result = await this.adsService.searchAds(
@@ -154,7 +176,7 @@ export class AdsController {
         sortBy || 'createdAt',
         sortOrder || 'desc',
         latitude,
-        longitude
+        longitude,
       );
 
       return {
@@ -164,9 +186,9 @@ export class AdsController {
           total: result.total,
           page: pageNum,
           limit: limitNum,
-          pages: Math.ceil(result.total / limitNum)
+          pages: Math.ceil(result.total / limitNum),
         },
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
       this.logger.error(`REST: Error searching ads: ${error.message}`);
@@ -175,7 +197,7 @@ export class AdsController {
         success: false,
         message: 'Failed to search ads',
         error: error.message,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     }
   }
@@ -190,7 +212,7 @@ export class AdsController {
     @Query('distance') distance: string = '10000',
     @Query('category') category?: string,
     @Query('page') page: string = '1',
-    @Query('limit') limit: string = '10'
+    @Query('limit') limit: string = '10',
   ) {
     this.logger.log(`REST: Getting nearby ads at (${latitude}, ${longitude})`);
 
@@ -207,7 +229,7 @@ export class AdsController {
         maxDistance,
         category,
         pageNum,
-        limitNum
+        limitNum,
       );
 
       return {
@@ -217,9 +239,9 @@ export class AdsController {
           total: result.total,
           page: pageNum,
           limit: limitNum,
-          pages: Math.ceil(result.total / limitNum)
+          pages: Math.ceil(result.total / limitNum),
         },
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
       this.logger.error(`REST: Error getting nearby ads: ${error.message}`);
@@ -228,7 +250,7 @@ export class AdsController {
         success: false,
         message: 'Failed to get nearby ads',
         error: error.message,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     }
   }
@@ -242,17 +264,17 @@ export class AdsController {
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '10',
     @Query('sortBy') sortBy?: string,
-    @Query('sortOrder') sortOrder?: string
+    @Query('sortOrder') sortOrder?: string,
   ) {
     const pageNum = parseInt(page, 10);
     const limitNum = parseInt(limit, 10);
-    
+
     // Generate cache key
     const cacheKey = this.adsService.getCacheKey(
       'ads:category',
       category,
       pageNum,
-      limitNum
+      limitNum,
     );
 
     // Try cache first
@@ -269,7 +291,7 @@ export class AdsController {
         pageNum,
         limitNum,
         sortBy || 'createdAt',
-        sortOrder || 'desc'
+        sortOrder || 'desc',
       );
 
       const response = {
@@ -279,22 +301,24 @@ export class AdsController {
           total: result.total,
           page: pageNum,
           limit: limitNum,
-          pages: Math.ceil(result.total / limitNum)
+          pages: Math.ceil(result.total / limitNum),
         },
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
 
       // Cache for 10 minutes
       await this.adsService.redisService.set(cacheKey, response, 600);
       return response;
     } catch (error) {
-      this.logger.error(`REST: Error getting ads by category: ${error.message}`);
+      this.logger.error(
+        `REST: Error getting ads by category: ${error.message}`,
+      );
 
       return {
         success: false,
         message: 'Failed to get ads by category',
         error: error.message,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     }
   }
@@ -305,7 +329,7 @@ export class AdsController {
   @Get('promoted/all')
   async getPromotedAds(
     @Query('page') page: string = '1',
-    @Query('limit') limit: string = '10'
+    @Query('limit') limit: string = '10',
   ) {
     this.logger.log('REST: Getting promoted ads');
 
@@ -315,7 +339,9 @@ export class AdsController {
 
       const result = await this.adsService.searchAds('', {}, pageNum, limitNum);
 
-      const promotedAds = result.ads.filter(ad => ad.isPromoted && ad.promotedUntil > new Date());
+      const promotedAds = result.ads.filter(
+        (ad) => ad.isPromoted && ad.promotedUntil > new Date(),
+      );
 
       return {
         success: true,
@@ -324,9 +350,9 @@ export class AdsController {
           total: promotedAds.length,
           page: pageNum,
           limit: limitNum,
-          pages: Math.ceil(promotedAds.length / limitNum)
+          pages: Math.ceil(promotedAds.length / limitNum),
         },
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
       this.logger.error(`REST: Error getting promoted ads: ${error.message}`);
@@ -335,7 +361,7 @@ export class AdsController {
         success: false,
         message: 'Failed to get promoted ads',
         error: error.message,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     }
   }
@@ -351,10 +377,23 @@ export class AdsController {
       const totalAds = await this.adsService.searchAds('', {}, 1, 1);
 
       const categories = [
-        'Education', 'Matrimonial', 'Vehicle', 'Business', 'Travel',
-        'Astrology', 'Property', 'Public Notice', 'Lost & Found',
-        'Service', 'Personal', 'Employment', 'Pets', 'Mobiles',
-        'Electronics & Home appliances', 'Furniture', 'Other'
+        'Education',
+        'Matrimonial',
+        'Vehicle',
+        'Business',
+        'Travel',
+        'Astrology',
+        'Property',
+        'Public Notice',
+        'Lost & Found',
+        'Service',
+        'Personal',
+        'Employment',
+        'Pets',
+        'Mobiles',
+        'Electronics & Home appliances',
+        'Furniture',
+        'Other',
       ];
 
       const categoryStats = await Promise.all(
@@ -362,9 +401,9 @@ export class AdsController {
           const result = await this.adsService.getAdsByCategory(category, 1, 1);
           return {
             category,
-            count: result.total
+            count: result.total,
           };
-        })
+        }),
       );
 
       return {
@@ -373,9 +412,9 @@ export class AdsController {
           totalAds: totalAds.total,
           activeAds: totalAds.total,
           promotedAds: 0,
-          categoryDistribution: categoryStats
+          categoryDistribution: categoryStats,
         },
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
       this.logger.error(`REST: Error getting statistics: ${error.message}`);
@@ -384,7 +423,7 @@ export class AdsController {
         success: false,
         message: 'Failed to get statistics',
         error: error.message,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     }
   }
@@ -393,13 +432,13 @@ export class AdsController {
    * Get category management data for admin dashboard page
    */
   @Get('stats/category-management')
-  async getCategoryManagementStats(
-    @Query('limit') limit: string = '12'
-  ) {
+  async getCategoryManagementStats(@Query('limit') limit: string = '12') {
     this.logger.log('REST: Getting category management stats');
 
     try {
-      const data = await this.adsService.getCategoryManagementPublic(parseInt(limit, 10));
+      const data = await this.adsService.getCategoryManagementPublic(
+        parseInt(limit, 10),
+      );
 
       return {
         success: true,
@@ -407,7 +446,9 @@ export class AdsController {
         timestamp: new Date().toISOString(),
       };
     } catch (error) {
-      this.logger.error(`REST: Error getting category management stats: ${error.message}`);
+      this.logger.error(
+        `REST: Error getting category management stats: ${error.message}`,
+      );
 
       return {
         success: false,
@@ -427,7 +468,7 @@ export class AdsController {
       status: 'healthy',
       service: 'ads-microservice',
       timestamp: new Date().toISOString(),
-      uptime: process.uptime()
+      uptime: process.uptime(),
     };
   }
 
@@ -444,15 +485,23 @@ export class AdsController {
     this.logger.log(`REST: Creating new ad for user: ${user.id}`);
 
     // Enforce banUntil: block ad posting if user is suspended
-    if (user.isBanned && user.banUntil && new Date(user.banUntil) > new Date()) {
+    if (
+      user.isBanned &&
+      user.banUntil &&
+      new Date(user.banUntil) > new Date()
+    ) {
       const until = new Date(user.banUntil);
-      const daysLeft = Math.ceil((until.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-      this.logger.warn(`Ad creation blocked - user is suspended until ${until.toISOString()}: ${user.email}`);
+      const daysLeft = Math.ceil(
+        (until.getTime() - Date.now()) / (1000 * 60 * 60 * 24),
+      );
+      this.logger.warn(
+        `Ad creation blocked - user is suspended until ${until.toISOString()}: ${user.email}`,
+      );
       return {
         success: false,
         message: `You are suspended from posting ads until ${until.toLocaleDateString()} (${daysLeft} day(s) left). Reason: ${user.banReason || 'No reason provided'}`,
         error: 'User suspended',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     }
 
@@ -473,7 +522,7 @@ export class AdsController {
         success: true,
         message: 'Ad created successfully',
         data: ad,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
       this.logger.error(`REST: Error creating ad: ${error.message}`);
@@ -482,7 +531,7 @@ export class AdsController {
         success: false,
         message: 'Failed to create ad',
         error: error.message,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     }
   }
@@ -493,8 +542,13 @@ export class AdsController {
   @Post('async')
   @HttpCode(HttpStatus.ACCEPTED)
   @UseGuards(JwtAuthGuard)
-  async createAdAsync(@Body() createAdDto: CreateAdDto, @CurrentUser() user: any) {
-    this.logger.log(`REST: Sending async ad creation request for user: ${user.id}`);
+  async createAdAsync(
+    @Body() createAdDto: CreateAdDto,
+    @CurrentUser() user: any,
+  ) {
+    this.logger.log(
+      `REST: Sending async ad creation request for user: ${user.id}`,
+    );
 
     // Always enforce userId from authenticated user
     createAdDto.userId = user.id;
@@ -511,23 +565,29 @@ export class AdsController {
         };
       }
 
-      await this.kafkaService.send(KAFKA_TOPICS.AD_CREATE, createAdDto, correlationId);
+      await this.kafkaService.send(
+        KAFKA_TOPICS.AD_CREATE,
+        createAdDto,
+        correlationId,
+      );
 
       return {
         success: true,
         message: 'Ad creation request submitted successfully',
         correlationId,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
-      this.logger.error(`REST: Error sending async ad creation: ${error.message}`);
+      this.logger.error(
+        `REST: Error sending async ad creation: ${error.message}`,
+      );
 
       return {
         success: false,
         message: 'Failed to submit ad creation request',
         error: error.message,
         correlationId,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     }
   }
@@ -556,7 +616,7 @@ export class AdsController {
   async getMyAds(
     @CurrentUser() user: any,
     @Query('page') page: string = '1',
-    @Query('limit') limit: string = '10'
+    @Query('limit') limit: string = '10',
   ) {
     this.logger.log(`REST: Getting ads for current user: ${user.id}`);
 
@@ -564,7 +624,11 @@ export class AdsController {
       const pageNum = parseInt(page, 10);
       const limitNum = parseInt(limit, 10);
 
-      const result = await this.adsService.getAdsByUser(user.id, pageNum, limitNum);
+      const result = await this.adsService.getAdsByUser(
+        user.id,
+        pageNum,
+        limitNum,
+      );
 
       return {
         success: true,
@@ -573,9 +637,9 @@ export class AdsController {
           total: result.total,
           page: pageNum,
           limit: limitNum,
-          pages: Math.ceil(result.total / limitNum)
+          pages: Math.ceil(result.total / limitNum),
         },
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
       this.logger.error(`REST: Error getting user ads: ${error.message}`);
@@ -584,7 +648,7 @@ export class AdsController {
         success: false,
         message: 'Failed to get your ads',
         error: error.message,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     }
   }
@@ -596,7 +660,7 @@ export class AdsController {
   async getAdsByUser(
     @Param('userId') userId: string,
     @Query('page') page: string = '1',
-    @Query('limit') limit: string = '10'
+    @Query('limit') limit: string = '10',
   ) {
     this.logger.log(`REST: Getting ads by user: ${userId}`);
 
@@ -604,7 +668,11 @@ export class AdsController {
       const pageNum = parseInt(page, 10);
       const limitNum = parseInt(limit, 10);
 
-      const result = await this.adsService.getAdsByUser(userId, pageNum, limitNum);
+      const result = await this.adsService.getAdsByUser(
+        userId,
+        pageNum,
+        limitNum,
+      );
 
       return {
         success: true,
@@ -613,9 +681,9 @@ export class AdsController {
           total: result.total,
           page: pageNum,
           limit: limitNum,
-          pages: Math.ceil(result.total / limitNum)
+          pages: Math.ceil(result.total / limitNum),
         },
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
       this.logger.error(`REST: Error getting ads by user: ${error.message}`);
@@ -624,7 +692,7 @@ export class AdsController {
         success: false,
         message: 'Failed to get ads by user',
         error: error.message,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     }
   }
@@ -638,13 +706,17 @@ export class AdsController {
   async updateAd(
     @Param('adId') adId: string,
     @Body() updateData: UpdateAdDto,
-    @CurrentUser() user: any
+    @CurrentUser() user: any,
   ) {
     this.logger.log(`REST: Updating ad: ${adId} by user: ${user.id}`);
 
     try {
       // Users can only update their own ads (handled in service)
-      const updatedAd = await this.adsService.updateAd(adId, user.id, updateData);
+      const updatedAd = await this.adsService.updateAd(
+        adId,
+        user.id,
+        updateData,
+      );
 
       // Emit update event
       await this.adsService.emitAdUpdated(updatedAd, uuidv4());
@@ -656,7 +728,7 @@ export class AdsController {
         success: true,
         message: 'Ad updated successfully',
         data: updatedAd,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
       this.logger.error(`REST: Error updating ad: ${error.message}`);
@@ -665,7 +737,7 @@ export class AdsController {
         success: false,
         message: 'Failed to update ad',
         error: error.message,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     }
   }
@@ -679,7 +751,7 @@ export class AdsController {
   async updateAdAsync(
     @Param('adId') adId: string,
     @Body() updateData: UpdateAdDto,
-    @CurrentUser() user: any
+    @CurrentUser() user: any,
   ) {
     this.logger.log(`REST: Sending async update request for ad: ${adId}`);
 
@@ -694,17 +766,21 @@ export class AdsController {
         };
       }
 
-      await this.kafkaService.send(KAFKA_TOPICS.AD_UPDATE, {
-        adId,
-        userId: user.id,
-        updateData
-      }, correlationId);
+      await this.kafkaService.send(
+        KAFKA_TOPICS.AD_UPDATE,
+        {
+          adId,
+          userId: user.id,
+          updateData,
+        },
+        correlationId,
+      );
 
       return {
         success: true,
         message: 'Ad update request submitted successfully',
         correlationId,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
       this.logger.error(`REST: Error sending async update: ${error.message}`);
@@ -714,7 +790,7 @@ export class AdsController {
         message: 'Failed to submit ad update request',
         error: error.message,
         correlationId,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     }
   }
@@ -724,10 +800,7 @@ export class AdsController {
    */
   @Delete(':adId')
   @UseGuards(JwtAuthGuard)
-  async deleteAd(
-    @Param('adId') adId: string,
-    @CurrentUser() user: any
-  ) {
+  async deleteAd(@Param('adId') adId: string, @CurrentUser() user: any) {
     this.logger.log(`REST: Deleting ad: ${adId} by user: ${user.id}`);
 
     try {
@@ -742,7 +815,7 @@ export class AdsController {
       return {
         success: true,
         message: 'Ad deleted successfully',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
       this.logger.error(`REST: Error deleting ad: ${error.message}`);
@@ -751,24 +824,24 @@ export class AdsController {
         success: false,
         message: 'Failed to delete ad',
         error: error.message,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     }
   }
 
   // src/ads/ads.controller.ts
-@Get('test-kafka')
-async testKafka() {
-  try {
-    const result = await this.kafkaService.emit('test-topic', {
-      message: 'Hello from GOLO Backend!',
-      timestamp: new Date().toISOString()
-    });
-    return { success: true, message: 'Kafka message sent', result };
-  } catch (error) {
-    return { success: false, error: error.message };
+  @Get('test-kafka')
+  async testKafka() {
+    try {
+      const result = await this.kafkaService.emit('test-topic', {
+        message: 'Hello from GOLO Backend!',
+        timestamp: new Date().toISOString(),
+      });
+      return { success: true, message: 'Kafka message sent', result };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
   }
-}
 
   /**
    * Delete ad via Kafka (async) - Authenticated users only
@@ -776,10 +849,7 @@ async testKafka() {
   @Delete(':adId/async')
   @HttpCode(HttpStatus.ACCEPTED)
   @UseGuards(JwtAuthGuard)
-  async deleteAdAsync(
-    @Param('adId') adId: string,
-    @CurrentUser() user: any
-  ) {
+  async deleteAdAsync(@Param('adId') adId: string, @CurrentUser() user: any) {
     this.logger.log(`REST: Sending async delete request for ad: ${adId}`);
 
     const correlationId = uuidv4();
@@ -793,16 +863,20 @@ async testKafka() {
         };
       }
 
-      await this.kafkaService.send(KAFKA_TOPICS.AD_DELETE, {
-        adId,
-        userId: user.id
-      }, correlationId);
+      await this.kafkaService.send(
+        KAFKA_TOPICS.AD_DELETE,
+        {
+          adId,
+          userId: user.id,
+        },
+        correlationId,
+      );
 
       return {
         success: true,
         message: 'Ad delete request submitted successfully',
         correlationId,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
       this.logger.error(`REST: Error sending async delete: ${error.message}`);
@@ -812,7 +886,7 @@ async testKafka() {
         message: 'Failed to submit ad delete request',
         error: error.message,
         correlationId,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     }
   }
@@ -826,9 +900,11 @@ async testKafka() {
     @Param('adId') adId: string,
     @Body('package') promotionPackage: string,
     @Body('duration') duration: number,
-    @CurrentUser() user: any
+    @CurrentUser() user: any,
   ) {
-    this.logger.log(`REST: Promoting ad: ${adId} with package: ${promotionPackage}`);
+    this.logger.log(
+      `REST: Promoting ad: ${adId} with package: ${promotionPackage}`,
+    );
 
     try {
       const promotedUntil = new Date();
@@ -837,19 +913,27 @@ async testKafka() {
       const updateData: UpdateAdDto = {
         isPromoted: true,
         promotedUntil,
-        promotionPackage
+        promotionPackage,
       };
 
-      const updatedAd = await this.adsService.updateAd(adId, user.id, updateData);
+      const updatedAd = await this.adsService.updateAd(
+        adId,
+        user.id,
+        updateData,
+      );
 
       if (this.kafkaService) {
-        await this.kafkaService.emit(KAFKA_TOPICS.AD_PROMOTED, {
-        adId,
-        userId: user.id,
-        promotionPackage,
-        promotedUntil,
-        timestamp: new Date().toISOString()
-        }, uuidv4());
+        await this.kafkaService.emit(
+          KAFKA_TOPICS.AD_PROMOTED,
+          {
+            adId,
+            userId: user.id,
+            promotionPackage,
+            promotedUntil,
+            timestamp: new Date().toISOString(),
+          },
+          uuidv4(),
+        );
       } else {
         this.logger.warn('Kafka disabled - AD_PROMOTED event not emitted');
       }
@@ -858,7 +942,7 @@ async testKafka() {
         success: true,
         message: 'Ad promoted successfully',
         data: updatedAd,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
       this.logger.error(`REST: Error promoting ad: ${error.message}`);
@@ -867,7 +951,7 @@ async testKafka() {
         success: false,
         message: 'Failed to promote ad',
         error: error.message,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     }
   }
@@ -889,7 +973,7 @@ async testKafka() {
       return {
         success: true,
         message: 'Ad deleted successfully by admin',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
       this.logger.error(`REST: Error in admin delete: ${error.message}`);
@@ -898,7 +982,7 @@ async testKafka() {
         success: false,
         message: 'Failed to delete ad',
         error: error.message,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     }
   }
@@ -912,18 +996,23 @@ async testKafka() {
   async adminUpdateAd(
     @Param('adId') adId: string,
     @Body() updateData: UpdateAdDto,
-    @CurrentUser() admin: any
+    @CurrentUser() admin: any,
   ) {
     this.logger.log(`REST: Admin updating ad: ${adId}`);
 
     try {
-      const updatedAd = await this.adsService.adminUpdateAd(adId, updateData, admin.id, admin.email);
+      const updatedAd = await this.adsService.adminUpdateAd(
+        adId,
+        updateData,
+        admin.id,
+        admin.email,
+      );
 
       return {
         success: true,
         message: 'Ad updated successfully by admin',
         data: updatedAd,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
       this.logger.error(`REST: Error in admin update: ${error.message}`);
@@ -932,7 +1021,7 @@ async testKafka() {
         success: false,
         message: 'Failed to update ad',
         error: error.message,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     }
   }
@@ -947,7 +1036,11 @@ async testKafka() {
     this.logger.log('REST: Admin resyncing view counts to unique visitors');
     try {
       const result = await this.adsService.resyncViewCounts();
-      return { success: true, message: `Resynced ${result.updated} ads`, data: result };
+      return {
+        success: true,
+        message: `Resynced ${result.updated} ads`,
+        data: result,
+      };
     } catch (error) {
       this.logger.error(`REST: Error resyncing views: ${error.message}`);
       return { success: false, message: 'Failed to resync view counts' };
@@ -981,7 +1074,11 @@ async testKafka() {
       };
     } catch (error) {
       this.logger.error(`REST: Error in expired cleanup: ${error.message}`);
-      return { success: false, message: 'Failed to cleanup expired ads', error: error.message };
+      return {
+        success: false,
+        message: 'Failed to cleanup expired ads',
+        error: error.message,
+      };
     }
   }
 
@@ -1000,7 +1097,7 @@ async testKafka() {
       return {
         success: true,
         data: ads,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
       this.logger.error(`REST: Error in admin get all: ${error.message}`);
@@ -1009,7 +1106,7 @@ async testKafka() {
         success: false,
         message: 'Failed to get all ads',
         error: error.message,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     }
   }
@@ -1047,20 +1144,25 @@ async testKafka() {
           exists,
           totalUsersInAdsService: count,
           sampleUser: sample ? { id: sample._id, email: sample.email } : null,
-          message: exists ? 'User found in AdsService' : 'User NOT found in AdsService'
-        }
+          message: exists
+            ? 'User found in AdsService'
+            : 'User NOT found in AdsService',
+        },
       };
     } catch (error) {
       return {
         success: false,
-        error: error.message
+        error: error.message,
       };
     }
   }
 
   @Post('debug-create')
   @UseGuards(JwtAuthGuard)
-  async debugCreateAd(@Body() createAdDto: CreateAdDto, @CurrentUser() user: any) {
+  async debugCreateAd(
+    @Body() createAdDto: CreateAdDto,
+    @CurrentUser() user: any,
+  ) {
     console.log('🔧 DEBUG CREATE AD CALLED');
     console.log('User from token:', user);
     console.log('DTO before:', JSON.stringify(createAdDto));
@@ -1115,7 +1217,10 @@ async testKafka() {
   }
 
   @Get('home/recommended')
-  async getRecommendedDeals(@CurrentUser() user: any, @Query('limit') limit: string = '10') {
+  async getRecommendedDeals(
+    @CurrentUser() user: any,
+    @Query('limit') limit: string = '10',
+  ) {
     this.logger.log('Fetching recommended deals');
     try {
       const limitNum = parseInt(limit, 10);
@@ -1149,9 +1254,9 @@ async testKafka() {
 
       // Track view ONLY if user is authenticated
       if (user?.id) {
-        this.adsService.trackViewWithVisitor(adId, user.id).catch(e =>
-          this.logger.error(`Error tracking view: ${e.message}`)
-        );
+        this.adsService
+          .trackViewWithVisitor(adId, user.id)
+          .catch((e) => this.logger.error(`Error tracking view: ${e.message}`));
       }
 
       return { success: true, data: ad };
@@ -1204,7 +1309,7 @@ async testKafka() {
 
     try {
       const reports = await this.adsService.getAllReports();
-      
+
       this.logger.log(`✅ Successfully fetched ${reports.length} reports`);
 
       return {
@@ -1214,7 +1319,10 @@ async testKafka() {
         timestamp: new Date().toISOString(),
       };
     } catch (error: any) {
-      this.logger.error(`❌ Error fetching reports: ${error.message}`, error.stack);
+      this.logger.error(
+        `❌ Error fetching reports: ${error.message}`,
+        error.stack,
+      );
       return {
         success: false,
         message: 'Failed to fetch reports',
@@ -1287,7 +1395,7 @@ async testKafka() {
       return {
         success: true,
         data: ad,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
       this.logger.error(`REST: Error getting ad: ${error.message}`);
@@ -1296,7 +1404,7 @@ async testKafka() {
         success: false,
         message: 'Failed to get ad',
         error: error.message,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     }
   }
@@ -1383,7 +1491,11 @@ async testKafka() {
   @Post('admin/:adId/review')
   async reviewAd(
     @Param('adId') adId: string,
-    @Body() body: { decision: 'approve' | 'remove' | 'request_changes'; adminNotes?: string },
+    @Body()
+    body: {
+      decision: 'approve' | 'remove' | 'request_changes';
+      adminNotes?: string;
+    },
     @CurrentUser() user: any,
   ) {
     this.logger.log(`Admin reviewing ad ${adId}, decision: ${body.decision}`);
@@ -1436,5 +1548,4 @@ async testKafka() {
       };
     }
   }
-
 }

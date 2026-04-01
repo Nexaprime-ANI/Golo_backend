@@ -12,14 +12,16 @@ async function bootstrap() {
   });
   const configService = app.get(ConfigService);
 
-  app.useGlobalPipes(new ValidationPipe({
-    whitelist: true,
-    forbidNonWhitelisted: true,
-    transform: true,
-    transformOptions: {
-      enableImplicitConversion: true
-    }
-  }));
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+      transformOptions: {
+        enableImplicitConversion: true,
+      },
+    }),
+  );
 
   const kafkaConfig = configService.get('config.kafka');
   const corsOrigins = configService.get<string[]>('config.cors.origins') || [];
@@ -31,7 +33,6 @@ async function bootstrap() {
         client: {
           clientId: kafkaConfig.clientId,
           brokers: kafkaConfig.brokers,
-
         },
         consumer: {
           groupId: kafkaConfig.groupId,
@@ -55,8 +56,6 @@ async function bootstrap() {
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   });
-
-  
 
   // const port = configService.get('config.service.port');
   const port = 3002;

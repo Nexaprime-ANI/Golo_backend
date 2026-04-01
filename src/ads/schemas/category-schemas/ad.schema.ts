@@ -29,12 +29,27 @@ export class Ad {
   description: string;
 
   @Prop({
-    required: true, enum: [
-      'Education', 'Matrimonial', 'Vehicle', 'Business', 'Travel',
-      'Astrology', 'Property', 'Public Notice', 'Lost & Found',
-      'Service', 'Personal', 'Employment', 'Pets', 'Mobiles',
-      'Electronics & Home appliances', 'Furniture', 'Greetings & Tributes', 'Other'
-    ]
+    required: true,
+    enum: [
+      'Education',
+      'Matrimonial',
+      'Vehicle',
+      'Business',
+      'Travel',
+      'Astrology',
+      'Property',
+      'Public Notice',
+      'Lost & Found',
+      'Service',
+      'Personal',
+      'Employment',
+      'Pets',
+      'Mobiles',
+      'Electronics & Home appliances',
+      'Furniture',
+      'Greetings & Tributes',
+      'Other',
+    ],
   })
   category: string;
 
@@ -83,13 +98,12 @@ export class Ad {
   @Prop({
     type: {
       type: String,
-      enum: ['Point']
-
+      enum: ['Point'],
     },
     coordinates: {
       type: [Number],
-      required: false
-    }
+      required: false,
+    },
   })
   locationCoordinates: {
     type: string;
@@ -102,8 +116,8 @@ export class Ad {
       phone: String,
       email: String,
       whatsapp: String,
-      preferredContactMethod: String
-    }
+      preferredContactMethod: String,
+    },
   })
   contactInfo: {
     name: string;
@@ -131,36 +145,37 @@ export class Ad {
     | LostFound
     | any;
 
-
-
   // ==================== NEW FIELDS FROM FRONTEND ====================
 
   @Prop({ type: [String], default: [] })
-  cities: string[];  // Multiple locations
+  cities: string[]; // Multiple locations
 
   @Prop({ default: 'english' })
-  language: string;  // MongoDB text index compatible (ISO 639-1 lowercase)
+  language: string; // MongoDB text index compatible (ISO 639-1 lowercase)
 
   @Prop()
-  primaryContact: string;  // Primary contact from form
+  primaryContact: string; // Primary contact from form
 
   @Prop({ type: [Date], default: [] })
-  selectedDates: Date[];  // Selected dates for scheduling
+  selectedDates: Date[]; // Selected dates for scheduling
 
   @Prop({ default: 1 })
-  templateId: number;  // Template ID (1, 2, or 3)
+  templateId: number; // Template ID (1, 2, or 3)
 
-  @Prop({ default: 'active', enum: ['active', 'expired', 'deleted', 'pending', 'rejected'] })
+  @Prop({
+    default: 'active',
+    enum: ['active', 'expired', 'deleted', 'pending', 'rejected'],
+  })
   status: string;
 
   @Prop({ default: 0 })
   views: number;
 
   @Prop({ default: 0 })
-  contactClicks: number;   // incremented when user clicks Chat/Call on the ad
+  contactClicks: number; // incremented when user clicks Chat/Call on the ad
 
   @Prop({ type: [String], default: [] })
-  viewHistory: string[];   // stores userId or IP for unique visitor tracking
+  viewHistory: string[]; // stores userId or IP for unique visitor tracking
 
   @Prop({ type: [String] })
   tags: string[];
@@ -182,8 +197,8 @@ export class Ad {
       ip: String,
       userAgent: String,
       platform: String,
-      deviceId: String
-    }
+      deviceId: String,
+    },
   })
   metadata: {
     ip: string;
@@ -202,7 +217,7 @@ export class Ad {
   rejectionReason: string;
 
   // ==================== REPORTING & MODERATION ====================
-  
+
   @Prop({ default: 0 })
   reportCount: number;
 
@@ -225,7 +240,7 @@ export class Ad {
   reviewedAt: Date;
 
   @Prop()
-  expiredAt: Date;  // When the ad was marked as expired (for 1-day grace period)
+  expiredAt: Date; // When the ad was marked as expired (for 1-day grace period)
 
   @Prop()
   createdAt: Date;
@@ -235,7 +250,6 @@ export class Ad {
 }
 
 // Create indexes for better query performance
-
 
 export const AdSchema = SchemaFactory.createForClass(Ad);
 
