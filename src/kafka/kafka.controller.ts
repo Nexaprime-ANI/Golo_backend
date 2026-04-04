@@ -1,10 +1,5 @@
 import { Controller, Logger } from '@nestjs/common';
-import {
-  MessagePattern,
-  Payload,
-  Ctx,
-  KafkaContext,
-} from '@nestjs/microservices';
+import { MessagePattern, Payload } from '@nestjs/microservices';
 import { KAFKA_TOPICS } from '../common/constants/kafka-topics';
 import { AdsService } from '../ads/ads.service';
 
@@ -15,7 +10,7 @@ export class KafkaController {
   constructor(private readonly adsService: AdsService) {}
 
   @MessagePattern(KAFKA_TOPICS.AD_CREATE)
-  async handleAdCreate(@Payload() message: any, @Ctx() context: KafkaContext) {
+  async handleAdCreate(@Payload() message: any) {
     const { value, headers } = message;
     const correlationId = headers?.correlationId || 'unknown';
     const startTime = Date.now();
@@ -62,7 +57,7 @@ export class KafkaController {
   }
 
   @MessagePattern(KAFKA_TOPICS.AD_GET)
-  async handleAdGet(@Payload() message: any, @Ctx() context: KafkaContext) {
+  async handleAdGet(@Payload() message: any) {
     const { value, headers } = message;
     const { adId } = value;
     const correlationId = headers?.correlationId || 'unknown';
@@ -95,10 +90,7 @@ export class KafkaController {
   }
 
   @MessagePattern(KAFKA_TOPICS.AD_GET_BY_CATEGORY)
-  async handleAdGetByCategory(
-    @Payload() message: any,
-    @Ctx() context: KafkaContext,
-  ) {
+  async handleAdGetByCategory(@Payload() message: any) {
     const { value, headers } = message;
     const {
       category,
@@ -144,10 +136,7 @@ export class KafkaController {
   }
 
   @MessagePattern(KAFKA_TOPICS.AD_GET_BY_USER)
-  async handleAdGetByUser(
-    @Payload() message: any,
-    @Ctx() context: KafkaContext,
-  ) {
+  async handleAdGetByUser(@Payload() message: any) {
     const { value, headers } = message;
     const { userId, page = 1, limit = 10 } = value;
     const correlationId = headers?.correlationId || 'unknown';
@@ -181,7 +170,7 @@ export class KafkaController {
   }
 
   @MessagePattern(KAFKA_TOPICS.AD_SEARCH)
-  async handleAdSearch(@Payload() message: any, @Ctx() context: KafkaContext) {
+  async handleAdSearch(@Payload() message: any) {
     const { value, headers } = message;
     const {
       query,
@@ -235,10 +224,7 @@ export class KafkaController {
   }
 
   @MessagePattern(KAFKA_TOPICS.AD_GET_NEARBY)
-  async handleAdGetNearby(
-    @Payload() message: any,
-    @Ctx() context: KafkaContext,
-  ) {
+  async handleAdGetNearby(@Payload() message: any) {
     const { value, headers } = message;
     const {
       latitude,
@@ -286,7 +272,7 @@ export class KafkaController {
   }
 
   @MessagePattern(KAFKA_TOPICS.AD_UPDATE)
-  async handleAdUpdate(@Payload() message: any, @Ctx() context: KafkaContext) {
+  async handleAdUpdate(@Payload() message: any) {
     const { value, headers } = message;
     const { adId, userId, updateData } = value;
     const correlationId = headers?.correlationId || 'unknown';
@@ -317,7 +303,7 @@ export class KafkaController {
   }
 
   @MessagePattern(KAFKA_TOPICS.AD_DELETE)
-  async handleAdDelete(@Payload() message: any, @Ctx() context: KafkaContext) {
+  async handleAdDelete(@Payload() message: any) {
     const { value, headers } = message;
     const { adId, userId } = value;
     const correlationId = headers?.correlationId || 'unknown';

@@ -929,8 +929,10 @@ export class UsersService {
 
   async adminCreateManager(
     dto: RegisterDto,
-    adminId: string,
-    adminEmail: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _adminId: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _adminEmail: string,
   ): Promise<User> {
     const existingUser = await this.userModel
       .findOne({ email: dto.email })

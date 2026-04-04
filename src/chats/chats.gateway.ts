@@ -58,7 +58,7 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       const userId = String(payload.sub);
       client.data.userId = userId;
-      client.join(`user:${userId}`);
+      void client.join(`user:${userId}`);
       this.trackOnline(userId, client.id);
       this.server.emit('presence_state', {
         userId,
@@ -129,7 +129,7 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         payload.conversationId,
       );
       const room = `conversation:${conversation._id.toString()}`;
-      client.join(room);
+      void client.join(room);
 
       const otherUserId =
         conversation.participants.find((id) => id !== String(userId)) || null;
@@ -157,7 +157,7 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() payload: { conversationId: string },
   ) {
     const room = `conversation:${payload.conversationId}`;
-    client.leave(room);
+    void client.leave(room);
     return { success: true };
   }
 

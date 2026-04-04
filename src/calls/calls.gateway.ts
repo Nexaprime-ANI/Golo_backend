@@ -61,7 +61,7 @@ export class CallsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       const userId = String(payload.sub);
       client.data.userId = userId;
-      client.join(`user:${userId}`);
+      void client.join(`user:${userId}`);
       this.logger.debug(
         `Calls socket connected for user ${userId}: ${client.id}`,
       );

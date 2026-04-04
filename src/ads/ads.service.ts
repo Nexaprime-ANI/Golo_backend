@@ -335,7 +335,7 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
         },
       });
 
-      this.emailTransporter.verify((error: any, success: any) => {
+      this.emailTransporter.verify((error: any) => {
         if (error) {
           this.logger.error(
             `Email service verification failed: ${error.message}`,

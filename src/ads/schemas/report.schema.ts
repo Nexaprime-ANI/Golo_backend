@@ -1,7 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document, Types } from 'mongoose';
-import { Ad } from '../../ads/schemas/category-schemas/ad.schema';
-import { User } from '../../users/schemas/user.schema';
+import { Document } from 'mongoose';
 
 export enum ReportReason {
   SPAM = 'spam',

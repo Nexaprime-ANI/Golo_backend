@@ -567,7 +567,7 @@ export class AdsController {
 
       await this.kafkaService.send(
         KAFKA_TOPICS.AD_CREATE,
-        createAdDto,
+        JSON.parse(JSON.stringify(createAdDto)),
         correlationId,
       );
 

@@ -23,7 +23,7 @@ export class EmailService {
       });
 
       // Verify connection
-      this.transporter.verify((error: any, success: any) => {
+      this.transporter.verify((error: any) => {
         if (error) {
           this.logger.error(
             `Email service verification failed: ${error.message}`,

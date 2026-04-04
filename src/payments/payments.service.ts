@@ -9,7 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import * as Razorpay from 'razorpay';
+import Razorpay from 'razorpay';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { randomUUID } from 'crypto';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -37,11 +37,6 @@ interface RazorpayWebhookPayload {
       };
     };
   };
-}
-
-interface RazorpayEvent {
-  event: string;
-  payload?: Record<string, unknown>;
 }
 
 @Injectable()
@@ -476,8 +471,10 @@ export class PaymentsService {
       payment.status = PaymentStatus.CAPTURED;
     } else if (event.event === 'payment.failed') {
       payment.status = PaymentStatus.FAILED;
-      payment.failureCode = paymentEntity.error_code;
-      payment.failureDescription = paymentEntity.error_description;
+      payment.failureCode = (paymentEntity as Record<string, any>).error_code;
+      payment.failureDescription = (
+        paymentEntity as Record<string, any>
+      ).error_description;
     }
 
     payment.metadata = {

@@ -1,19 +1,33 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Schema as MongooseSchema } from 'mongoose';
-import { Vehicle, VehicleSchema } from './vehicle.schema';
-import { Property, PropertySchema } from './property.schema';
-import { Service, ServiceSchema } from './service.schema';
-import { Mobile, MobileSchema } from './mobiles.schema';
-import { Electronics, ElectronicsSchema } from './electronics.schema';
-import { Furniture, FurnitureSchema } from './furniture.schema';
-import { Education, EducationSchema } from './education.schema';
-import { Pets, PetsSchema } from './pets.schema';
-import { Matrimonial, MatrimonialSchema } from './matrimonial.schema';
-import { Business, BusinessSchema } from './business.schema';
-import { Travel, TravelSchema } from './travel.schema';
-import { Astrology, AstrologySchema } from './astrology.schema';
-import { Employment, EmploymentSchema } from './employment.schema';
-import { LostFound, LostFoundSchema } from './lost-found.schema';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { Vehicle } from './vehicle.schema';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { Property } from './property.schema';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { Service } from './service.schema';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { Mobile } from './mobiles.schema';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { Electronics } from './electronics.schema';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { Furniture } from './furniture.schema';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { Education } from './education.schema';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { Pets } from './pets.schema';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { Matrimonial } from './matrimonial.schema';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { Business } from './business.schema';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { Travel } from './travel.schema';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { Astrology } from './astrology.schema';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { Employment } from './employment.schema';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { LostFound } from './lost-found.schema';
 
 export type AdDocument = Ad & Document;
 

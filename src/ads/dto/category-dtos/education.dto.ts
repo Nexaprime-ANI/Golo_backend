@@ -6,7 +6,6 @@ import {
   IsArray,
   IsEmail,
   Min,
-  IsDate,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
