@@ -6,6 +6,13 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { User, UserDocument } from '../schemas/user.schema';
 
+interface JwtPayload {
+  sub: string;
+  email?: string;
+  role?: string;
+  name?: string;
+}
+
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
@@ -26,7 +33,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(payload: any) {
+  async validate(payload: JwtPayload) {
     try {
       if (!payload || !payload.sub) {
         throw new UnauthorizedException(
@@ -38,9 +45,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       if (payload.role === 'admin') {
         return {
           id: payload.sub,
-          email: payload.email,
+          email: payload.email ?? '',
           role: 'admin',
-          name: payload.name || payload.email,
+          name: payload.name ?? payload.email ?? 'admin',
         };
       }
 
@@ -51,14 +58,17 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       }
 
       // Convert _id to string to avoid ObjectId issues
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+      const userId = (user._id as { toString(): string }).toString();
       return {
-        id: user._id.toString(),
+        id: userId,
         email: user.email,
         role: user.role,
         name: user.name,
       };
     } catch (error) {
-      console.error('[JWT Strategy] Validation failed:', error.message);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error('[JWT Strategy] Validation failed:', errorMsg);
       throw error;
     }
   }

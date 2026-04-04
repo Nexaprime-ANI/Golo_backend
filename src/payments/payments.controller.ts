@@ -20,13 +20,22 @@ import { MarkPaymentFailedDto } from './dto/mark-payment-failed.dto';
 import { ListPaymentsQueryDto } from './dto/list-payments-query.dto';
 import { PaymentsService } from './payments.service';
 
+interface CurrentUserPayload {
+  id: string;
+  email: string;
+  role: string;
+}
+
 @Controller('payments')
 export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 
   @Post('create-order')
   @UseGuards(JwtAuthGuard)
-  async createOrder(@CurrentUser() user: any, @Body() dto: CreateOrderDto) {
+  async createOrder(
+    @CurrentUser() user: CurrentUserPayload,
+    @Body() dto: CreateOrderDto,
+  ) {
     const data = await this.paymentsService.createOrder(user.id, dto);
     return {
       success: true,
@@ -37,7 +46,10 @@ export class PaymentsController {
 
   @Post('verify')
   @UseGuards(JwtAuthGuard)
-  async verifyPayment(@CurrentUser() user: any, @Body() dto: VerifyPaymentDto) {
+  async verifyPayment(
+    @CurrentUser() user: CurrentUserPayload,
+    @Body() dto: VerifyPaymentDto,
+  ) {
     const data = await this.paymentsService.verifyPayment(user.id, dto);
     return {
       success: true,
@@ -49,7 +61,7 @@ export class PaymentsController {
   @Post('fail')
   @UseGuards(JwtAuthGuard)
   async markPaymentFailed(
-    @CurrentUser() user: any,
+    @CurrentUser() user: CurrentUserPayload,
     @Body() dto: MarkPaymentFailedDto,
   ) {
     const data = await this.paymentsService.markPaymentFailed(user.id, dto);
@@ -62,7 +74,10 @@ export class PaymentsController {
 
   @Post('refund')
   @UseGuards(JwtAuthGuard)
-  async refundPayment(@CurrentUser() user: any, @Body() dto: RefundPaymentDto) {
+  async refundPayment(
+    @CurrentUser() user: CurrentUserPayload,
+    @Body() dto: RefundPaymentDto,
+  ) {
     const data = await this.paymentsService.refundPayment(user.id, dto);
     return {
       success: true,
@@ -74,7 +89,7 @@ export class PaymentsController {
   @Get('my')
   @UseGuards(JwtAuthGuard)
   async listMyPayments(
-    @CurrentUser() user: any,
+    @CurrentUser() user: CurrentUserPayload,
     @Query() query: ListPaymentsQueryDto,
   ) {
     const data = await this.paymentsService.listMyPayments(user.id, query);
@@ -87,7 +102,7 @@ export class PaymentsController {
   @Get(':paymentId')
   @UseGuards(JwtAuthGuard)
   async getPaymentById(
-    @CurrentUser() user: any,
+    @CurrentUser() user: CurrentUserPayload,
     @Param('paymentId') paymentId: string,
   ) {
     const data = await this.paymentsService.getPaymentById(user.id, paymentId);

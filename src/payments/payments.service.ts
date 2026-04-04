@@ -9,7 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import Razorpay = require('razorpay');
+import * as Razorpay from 'razorpay';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { randomUUID } from 'crypto';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -24,6 +24,25 @@ import {
 } from './schemas/payment.schema';
 import { KafkaService } from '../kafka/kafka.service';
 import { KAFKA_TOPICS } from '../common/constants/kafka-topics';
+
+// Type definitions for webhook payloads
+interface RazorpayWebhookPayload {
+  event: string;
+  payload?: {
+    payment?: {
+      entity?: {
+        id: string;
+        order_id: string;
+        method: string;
+      };
+    };
+  };
+}
+
+interface RazorpayEvent {
+  event: string;
+  payload?: Record<string, unknown>;
+}
 
 @Injectable()
 export class PaymentsService {
@@ -212,8 +231,9 @@ export class PaymentsService {
           ? PaymentStatus.CAPTURED
           : PaymentStatus.AUTHORIZED;
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       this.logger.warn(
-        `Failed to fetch payment from Razorpay after signature verification: ${error.message}`,
+        `Failed to fetch payment from Razorpay after signature verification: ${errorMsg}`,
       );
       payment.status = PaymentStatus.AUTHORIZED;
     }
@@ -393,7 +413,10 @@ export class PaymentsService {
     };
   }
 
-  async handleWebhook(rawBody: string, signature: string) {
+  async handleWebhook(
+    rawBody: string,
+    signature: string,
+  ): Promise<Record<string, unknown>> {
     if (!this.webhookSecret) {
       throw new InternalServerErrorException(
         'Razorpay webhook secret is not configured.',
@@ -418,8 +441,8 @@ export class PaymentsService {
       throw new BadRequestException('Invalid webhook signature');
     }
 
-    const event = JSON.parse(rawBody || '{}');
-    const eventId = event?.event || 'unknown_event';
+    const event = JSON.parse(rawBody || '{}') as RazorpayWebhookPayload;
+    const eventId = event?.event ?? 'unknown_event';
     const paymentEntity = event?.payload?.payment?.entity;
 
     if (!paymentEntity) {
