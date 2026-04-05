@@ -21,14 +21,13 @@ cache:
 lint:
   stage: lint
   script:
-    - echo "🔍 Running ESLint..."
+    - echo "Running ESLint..."
     - npm ci
     - npm run lint || true
   artifacts:
     paths:
       - eslint-report.json
     when: always
-  allow_failure: true
   rules:
     - when: always
 
@@ -37,7 +36,7 @@ lint:
 build:
   stage: build
   script:
-    - echo "🔨 Building project..."
+    - echo "Building project..."
     - npm ci
     - npm run build
   artifacts:
@@ -53,7 +52,7 @@ sonarqube:
   stage: sonarqube
   image: sonarsource/sonar-scanner-cli:latest
   script:
-    - echo "🔬 Running SonarQube analysis..."
+    - echo "Running SonarQube analysis..."
     - |
       sonar-scanner \
         -Dsonar.projectKey=golo-ads-service \
@@ -78,10 +77,9 @@ sonarqube:
 test:
   stage: test
   script:
-    - echo "🧪 Running tests..."
+    - echo "Running tests..."
     - npm ci
     - npm run test -- --passWithNoTests 2>&1 || true
-  allow_failure: true
   rules:
     - when: always
 
@@ -90,7 +88,7 @@ test:
 deploy:
   stage: deploy
   script:
-    - echo "🚀 Deploying..."
+    - echo "Deploying..."
   when: manual
   only:
     - main
