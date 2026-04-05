@@ -4,7 +4,14 @@ import { AppModule } from './app.module';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-async function bootstrap() {
+interface KafkaConfigType {
+  enabled: boolean;
+  clientId: string;
+  brokers: string[];
+  groupId: string;
+}
+
+async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
 
   const app = await NestFactory.create(AppModule, {
@@ -12,17 +19,18 @@ async function bootstrap() {
   });
   const configService = app.get(ConfigService);
 
-  app.useGlobalPipes(new ValidationPipe({
-    whitelist: true,
-    forbidNonWhitelisted: true,
-    transform: true,
-    transformOptions: {
-      enableImplicitConversion: true
-    }
-  }));
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+      transformOptions: {
+        enableImplicitConversion: true,
+      },
+    }),
+  );
 
-  const kafkaConfig = configService.get('config.kafka');
-  const corsOrigins = configService.get<string[]>('config.cors.origins') || [];
+  const kafkaConfig = configService.get<KafkaConfigType>('config.kafka');
 
   if (kafkaConfig?.enabled) {
     app.connectMicroservice<MicroserviceOptions>({
@@ -31,7 +39,6 @@ async function bootstrap() {
         client: {
           clientId: kafkaConfig.clientId,
           brokers: kafkaConfig.brokers,
-
         },
         consumer: {
           groupId: kafkaConfig.groupId,
@@ -56,12 +63,11 @@ async function bootstrap() {
     allowedHeaders: ['Content-Type', 'Authorization'],
   });
 
-  
-
   // const port = configService.get('config.service.port');
   const port = 3002;
   await app.listen(port);
 
   logger.log(`Ads microservice is running on port ${port}`);
 }
-bootstrap();
+
+void bootstrap();

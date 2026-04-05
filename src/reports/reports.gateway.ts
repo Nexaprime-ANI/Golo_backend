@@ -8,11 +8,30 @@ import {
   WebSocketServer,
   WsException,
 } from '@nestjs/websockets';
-import { Logger, UseGuards, Inject, Optional } from '@nestjs/common';
+import { Logger, Optional } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+
+// ==================== INTERFACES ====================
+interface JwtPayload {
+  sub: string;
+  role: string;
+  iat?: number;
+  exp?: number;
+}
+
+interface ReportData {
+  reportId: string;
+  adId: string;
+  reason: string;
+  reportCount: number;
+}
+
+interface PingData {
+  [key: string]: unknown;
+}
 
 @WebSocketGateway({
   namespace: '/reports',
@@ -21,7 +40,9 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
     credentials: true,
   },
 })
-export class ReportsGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class ReportsGateway
+  implements OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer()
   server: Server;
 
@@ -35,14 +56,24 @@ export class ReportsGateway implements OnGatewayConnection, OnGatewayDisconnect 
   ) {
     // Listen for report events from the entire application
     if (this.eventEmitter) {
-      this.eventEmitter.on('report.submitted', (data) => this.handleReportSubmitted(data));
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+      this.eventEmitter.on('report.submitted', (data: unknown) =>
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        this.handleReportSubmitted(data as ReportData),
+      );
     }
   }
 
-  async handleConnection(client: Socket) {
+  handleConnection(client: Socket) {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       const tokenFromAuth = client.handshake.auth?.token;
-      const tokenFromHeader = client.handshake.headers.authorization?.replace('Bearer ', '');
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
+      const tokenFromHeader = client.handshake.headers.authorization?.replace(
+        'Bearer ',
+        '',
+      );
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       const token = tokenFromAuth || tokenFromHeader;
 
       if (!token) {
@@ -51,29 +82,40 @@ export class ReportsGateway implements OnGatewayConnection, OnGatewayDisconnect 
       }
 
       // Verify JWT token
-      let decoded;
+      let decoded: JwtPayload;
       try {
-        decoded = this.jwtService.verify(token, {
-          secret: this.configService.get('JWT_SECRET'),
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        decoded = this.jwtService.verify<JwtPayload>(token, {
+          secret: this.configService.get<string>('JWT_SECRET'),
         });
-      } catch (jwtError: any) {
-        this.logger.error(`❌ JWT verification failed: ${jwtError.message}`);
-        throw new WsException(`JWT verification failed: ${jwtError.message}`);
+      } catch (jwtError) {
+        const errorMessage =
+          jwtError instanceof Error
+            ? jwtError.message
+            : 'JWT verification failed';
+        this.logger.error(`❌ JWT verification failed: ${errorMessage}`);
+        throw new WsException(`JWT verification failed: ${errorMessage}`);
       }
 
       // Only admins can connect to reports namespace
       if (decoded.role !== 'admin') {
-        this.logger.error(`❌ Non-admin user tried to connect: ${decoded.sub} (role: ${decoded.role})`);
+        this.logger.error(
+          `❌ Non-admin user tried to connect: ${decoded.sub} (role: ${decoded.role})`,
+        );
         throw new WsException('Only admins can access reports');
       }
 
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       client.data.userId = decoded.sub;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       client.data.userRole = decoded.role;
 
       // Track admin clients
       this.adminSockets.add(client.id);
 
-      this.logger.log(`✅ Admin ${decoded.sub} connected to reports (Total admins: ${this.adminSockets.size})`);
+      this.logger.log(
+        `✅ Admin ${decoded.sub} connected to reports (Total admins: ${this.adminSockets.size})`,
+      );
 
       // Send confirmation
       client.emit('connected', {
@@ -82,35 +124,48 @@ export class ReportsGateway implements OnGatewayConnection, OnGatewayDisconnect 
         userId: decoded.sub,
         role: decoded.role,
       });
-    } catch (error: any) {
-      this.logger.error(`❌ Socket connection failed: ${error.message}`, error.stack);
-      client.emit('error', { 
-        message: error.message || 'Authentication failed',
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Authentication failed';
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(
+        `❌ Socket connection failed: ${errorMessage}`,
+        errorStack,
+      );
+      client.emit('error', {
+        message: errorMessage,
         status: 'error',
       });
       client.disconnect();
     }
   }
 
-  async handleDisconnect(client: Socket) {
+  handleDisconnect(client: Socket) {
     this.adminSockets.delete(client.id);
-    this.logger.log(`❌ Admin disconnected from reports (Total admins: ${this.adminSockets.size})`);
+    this.logger.log(
+      `❌ Admin disconnected from reports (Total admins: ${this.adminSockets.size})`,
+    );
   }
 
   /**
    * Handle new report submitted event
    */
   @SubscribeMessage('ping')
-  handlePing(@ConnectedSocket() client: Socket, @MessageBody() data: any) {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  handlePing(@ConnectedSocket() client: Socket, @MessageBody() data: PingData) {
+    void client; // Use the parameter to avoid unused variable error
+    void data;
     return { pong: true, timestamp: new Date().toISOString() };
   }
 
   /**
    * Called by service/Kafka when a new report is submitted
    */
-  public broadcastNewReport(reportData: any) {
+  public broadcastNewReport(reportData: ReportData) {
     if (this.server && this.adminSockets.size > 0) {
-      this.logger.log(`📢 Broadcasting new report to ${this.adminSockets.size} admins`);
+      this.logger.log(
+        `📢 Broadcasting new report to ${this.adminSockets.size} admins`,
+      );
       this.server.emit('new_report', {
         reportId: reportData.reportId,
         adId: reportData.adId,
@@ -124,7 +179,7 @@ export class ReportsGateway implements OnGatewayConnection, OnGatewayDisconnect 
   /**
    * Internal handler for report submitted events
    */
-  private handleReportSubmitted(data: any) {
+  private handleReportSubmitted(data: ReportData) {
     this.broadcastNewReport(data);
   }
 
@@ -132,7 +187,9 @@ export class ReportsGateway implements OnGatewayConnection, OnGatewayDisconnect 
    * Get connected admins count (for monitoring)
    */
   @SubscribeMessage('get_status')
-  handleGetStatus(@ConnectedSocket() client: Socket) {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  handleGetStatus(client: Socket): object {
+    void client; // Use the parameter to avoid unused variable error
     return {
       status: 'ok',
       adminsConnected: this.adminSockets.size,

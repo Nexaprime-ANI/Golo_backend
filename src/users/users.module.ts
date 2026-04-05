@@ -6,7 +6,10 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
 import { User, UserSchema } from './schemas/user.schema';
-import { Notification, NotificationSchema } from './schemas/notification.schema';
+import {
+  Notification,
+  NotificationSchema,
+} from './schemas/notification.schema';
 import { Merchant, MerchantSchema } from './schemas/merchant.schema';
 import { UserReport, UserReportSchema } from './schemas/user-report.schema';
 import { JwtStrategy } from './strategies/jwt.strategy';
@@ -26,25 +29,26 @@ import { Payment, PaymentSchema } from '../payments/schemas/payment.schema';
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => {
+      useFactory: (configService: ConfigService) => {
         const secret = configService.get<string>('JWT_SECRET');
-        const expiresIn = configService.get<string>('JWT_EXPIRATION') || '15m';
-        
+        const expiresIn = (configService.get<string>('JWT_EXPIRATION') ??
+          '15m') as any;
+
         if (!secret) {
           throw new Error('JWT_SECRET is not defined in environment variables');
         }
 
         return {
-          secret: secret,
+          secret,
           signOptions: {
-            expiresIn: expiresIn as any,
+            expiresIn,
           },
         };
       },
       inject: [ConfigService],
     }),
     KafkaModule, // Keep existing forwardRef
-    forwardRef(() => AdsModule), 
+    forwardRef(() => AdsModule),
   ],
   controllers: [UsersController],
   providers: [UsersService, JwtStrategy],
