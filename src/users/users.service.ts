@@ -159,6 +159,8 @@ export class UsersService {
         storeEmail: registerDto.storeEmail?.trim() || registerDto.email,
         gstNumber: registerDto.gstNumber?.trim() || undefined,
         contactNumber: registerDto.contactNumber?.trim() || registerDto.phone,
+        storeCategory: registerDto.storeCategory?.trim() || undefined,
+        storeSubCategory: registerDto.storeSubCategory?.trim() || undefined,
         storeLocation: registerDto.storeLocation?.trim() || undefined,
         status: 'active',
       });

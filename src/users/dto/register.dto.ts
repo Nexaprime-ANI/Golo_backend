@@ -39,6 +39,14 @@ export class RegisterDto {
 
   @IsOptional()
   @IsString()
+  storeCategory?: string;
+
+  @IsOptional()
+  @IsString()
+  storeSubCategory?: string;
+
+  @IsOptional()
+  @IsString()
   storeLocation?: string;
 }
 

@@ -21,6 +21,12 @@ export class Merchant {
   contactNumber?: string;
 
   @Prop()
+  storeCategory?: string;
+
+  @Prop()
+  storeSubCategory?: string;
+
+  @Prop()
   storeLocation?: string;
 
   @Prop({ default: 'active' })
