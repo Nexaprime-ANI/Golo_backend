@@ -82,13 +82,3 @@ test:
     - npm run test -- --passWithNoTests 2>&1 || true
   rules:
     - when: always
-
-# ==================== DEPLOY STAGE ====================
-
-deploy:
-  stage: deploy
-  script:
-    - echo "Deploying..."
-  when: manual
-  only:
-    - main
