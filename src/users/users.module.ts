@@ -14,7 +14,7 @@ import { Merchant, MerchantSchema } from './schemas/merchant.schema';
 import { UserReport, UserReportSchema } from './schemas/user-report.schema';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { KafkaModule } from '../kafka/kafka.module';
-import { AdsModule } from 'src/ads/ads.module';
+import { AdsModule } from '../ads/ads.module';
 import { Payment, PaymentSchema } from '../payments/schemas/payment.schema';
 
 @Module({
