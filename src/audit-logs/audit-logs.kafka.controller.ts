@@ -1,5 +1,5 @@
 import { Controller, Logger, Optional } from '@nestjs/common';
-import { Ctx, KafkaContext, MessagePattern, Payload } from '@nestjs/microservices';
+import { MessagePattern, Payload } from '@nestjs/microservices';
 import { AuditLogsService } from './audit-logs.service';
 import { KAFKA_TOPICS } from '../common/constants/kafka-topics';
 import { KafkaService } from '../kafka/kafka.service';
@@ -43,7 +43,7 @@ export class AuditLogsKafkaController {
   }
 
   @MessagePattern(KAFKA_TOPICS.AUDIT_LOG_CREATE)
-  async handleCreateLog(@Payload() message: any, @Ctx() context: KafkaContext) {
+  async handleCreateLog(@Payload() message: any) {
     const value = this.getValue(message);
     const correlationId = this.getCorrelationId(message);
 
@@ -71,7 +71,7 @@ export class AuditLogsKafkaController {
   }
 
   @MessagePattern(KAFKA_TOPICS.AUDIT_LOG_LIST)
-  async handleListLogs(@Payload() message: any, @Ctx() context: KafkaContext) {
+  async handleListLogs(@Payload() message: any) {
     const value = this.getValue(message);
     const correlationId = this.getCorrelationId(message);
 
@@ -86,4 +86,3 @@ export class AuditLogsKafkaController {
     }
   }
 }
-

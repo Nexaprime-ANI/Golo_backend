@@ -46,7 +46,6 @@ export const KAFKA_TOPICS = {
   AD_REPORT_SUBMITTED: 'ad.report.submitted',
   AD_AUTO_DISABLED: 'ad.auto.disabled',
   AD_REVIEW_REQUEST: 'ad.review.request',
-<<<<<<< HEAD
 
   // Chat Commands
   CHAT_START_CONVERSATION: 'chat.start.conversation',
@@ -90,7 +89,4 @@ export const KAFKA_TOPICS = {
 
   // Reports Commands
   REPORTS_STATUS: 'reports.status',
-
-=======
->>>>>>> 4d37f9e4e8ae25e132ebd5a049c4910dd7c816bb
 };

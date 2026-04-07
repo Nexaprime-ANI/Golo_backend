@@ -27,8 +27,4 @@ import { KafkaModule } from '../kafka/kafka.module';
   providers: [AdsService],
   exports: [AdsService],
 })
-<<<<<<< HEAD
-export class AdsModule { }
-=======
 export class AdsModule {}
->>>>>>> 4d37f9e4e8ae25e132ebd5a049c4910dd7c816bb

@@ -187,7 +187,11 @@ export class ReportsGateway
    * Get connected admins count (for monitoring)
    */
   @SubscribeMessage('get_status')
-  handleGetStatus(@ConnectedSocket() client: Socket) {
+  handleGetStatus() {
+    return this.getGatewayStatus();
+  }
+
+  public getGatewayStatus() {
     return {
       status: 'ok',
       adminsConnected: this.adminSockets.size,
