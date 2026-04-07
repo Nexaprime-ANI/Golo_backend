@@ -9,8 +9,14 @@ import { KafkaModule } from '../kafka/kafka.module';
 @Global()
 @Module({
   imports: [
+<<<<<<< HEAD
     MongooseModule.forFeature([{ name: AuditLog.name, schema: AuditLogSchema }]),
     KafkaModule,
+=======
+    MongooseModule.forFeature([
+      { name: AuditLog.name, schema: AuditLogSchema },
+    ]),
+>>>>>>> 4d37f9e4e8ae25e132ebd5a049c4910dd7c816bb
   ],
   controllers: [AuditLogsController, AuditLogsKafkaController],
   providers: [AuditLogsService],

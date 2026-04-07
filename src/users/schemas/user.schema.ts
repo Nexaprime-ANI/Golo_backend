@@ -6,7 +6,8 @@ export type UserDocument = User & Document;
 export enum UserRole {
   USER = 'customer',
   MERCHANT = 'merchant',
-  ADMIN = 'admin'
+  ADMIN = 'admin',
+  MANAGER = 'manager',
 }
 
 @Schema({ timestamps: true })
@@ -43,8 +44,8 @@ export class User {
       state: String,
       pincode: String,
       avatar: String,
-      bio: String
-    }
+      bio: String,
+    },
   })
   profile: {
     phone?: string;
@@ -93,7 +94,6 @@ export class User {
     updatedAt?: Date;
   };
 
-
   @Prop({ default: false })
   isBanned: boolean;
 
@@ -104,7 +104,10 @@ export class User {
   @Prop()
   banUntil?: Date;
 
-  @Prop({ enum: ['Pending', 'Verified', 'Rejected', 'Under Review'], default: 'Pending' })
+  @Prop({
+    enum: ['Pending', 'Verified', 'Rejected', 'Under Review'],
+    default: 'Pending',
+  })
   kycStatus?: string;
 
   @Prop()

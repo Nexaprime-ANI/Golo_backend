@@ -7,7 +7,10 @@ export class AnalyticsController {
 
   @Get('device-breakdown')
   async getDeviceBreakdown() {
-    return { success: true, data: await this.analyticsService.getDeviceBreakdown() };
+    return {
+      success: true,
+      data: await this.analyticsService.getDeviceBreakdown(),
+    };
   }
 
   @Get('top-regions')
@@ -27,6 +30,9 @@ export class AnalyticsController {
 
   @Get('recent-activity')
   async getRecentActivity() {
-    return { success: true, data: await this.analyticsService.getRecentActivity() };
+    return {
+      success: true,
+      data: await this.analyticsService.getRecentActivity(),
+    };
   }
 }

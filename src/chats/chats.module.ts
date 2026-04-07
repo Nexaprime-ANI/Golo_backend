@@ -5,8 +5,15 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ChatsController } from './chats.controller';
 import { ChatsService } from './chats.service';
 import { ChatsGateway } from './chats.gateway';
+<<<<<<< HEAD
 import { ChatsKafkaController } from './chats.kafka.controller';
 import { Conversation, ConversationSchema } from './schemas/conversation.schema';
+=======
+import {
+  Conversation,
+  ConversationSchema,
+} from './schemas/conversation.schema';
+>>>>>>> 4d37f9e4e8ae25e132ebd5a049c4910dd7c816bb
 import { Message, MessageSchema } from './schemas/message.schema';
 import { Ad, AdSchema } from '../ads/schemas/category-schemas/ad.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';

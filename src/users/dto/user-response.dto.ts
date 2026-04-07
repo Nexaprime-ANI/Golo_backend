@@ -17,7 +17,7 @@ export class UserResponseDto {
     updatedAt?: Date;
   } | null;
   createdAt: Date;
-  
+
   constructor(partial: Partial<UserResponseDto>) {
     Object.assign(this, partial);
   }
