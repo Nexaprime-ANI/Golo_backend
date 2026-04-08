@@ -34,7 +34,7 @@ lint:
       - eslint-report.json
     when: always
   rules:
-    - if: '$CI_PIPELINE_SOURCE'
+    - if: "$CI_PIPELINE_SOURCE"
 
 # ==================== BUILD STAGE ====================
 
@@ -49,7 +49,7 @@ build:
       - dist/
     expire_in: 1 day
   rules:
-    - if: '$CI_PIPELINE_SOURCE'
+    - if: "$CI_PIPELINE_SOURCE"
 
 # ==================== SONARQUBE STAGE ====================
 
@@ -73,7 +73,7 @@ sonarqube:
         -Dsonar.login=${SONAR_TOKEN}
   allow_failure: true
   rules:
-    - if: '$SONAR_HOST_URL && $SONAR_TOKEN'
+    - if: "$SONAR_HOST_URL && $SONAR_TOKEN"
       when: always
     - when: never
 
@@ -86,23 +86,22 @@ test:
     - npm ci
     - npm run test -- --passWithNoTests 2>&1 || true
   rules:
-    - if: '$CI_PIPELINE_SOURCE'
-
+    - if: "$CI_PIPELINE_SOURCE"
 
 staging-health-check:
   stage: deploy
   script:
     - echo "Checking staging health..."
     - |
-     for i in {1..10}; do
-      if curl -f https://your-app.onrender.com/health; then
-      echo "App is healthy ✅"
-     exit 0
-     fi
-     echo "Retrying..."
-     sleep 2
-     done
-     echo "App failed health check ❌"
-     exit 1
+      for i in {1..10}; do
+       if curl -f https://your-app.onrender.com/health; then
+       echo "App is healthy ✅"
+      exit 0
+      fi
+      echo "Retrying..."
+      sleep 2
+      done
+      echo "App failed health check ❌"
+      exit 1
   rules:
     - if: '$CI_COMMIT_BRANCH == "develop"'
