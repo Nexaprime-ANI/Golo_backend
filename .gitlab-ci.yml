@@ -10,6 +10,11 @@ stages:
 variables:
   NPM_CACHE_DIR: "$CI_PROJECT_DIR/.npm"
 
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
 cache:
   key: ${CI_COMMIT_REF_SLUG}
   paths:
@@ -29,7 +34,7 @@ lint:
       - eslint-report.json
     when: always
   rules:
-    - when: always
+    - if: '$CI_PIPELINE_SOURCE'
 
 # ==================== BUILD STAGE ====================
 
@@ -44,7 +49,7 @@ build:
       - dist/
     expire_in: 1 day
   rules:
-    - when: always
+    - if: '$CI_PIPELINE_SOURCE'
 
 # ==================== SONARQUBE STAGE ====================
 
@@ -81,4 +86,4 @@ test:
     - npm ci
     - npm run test -- --passWithNoTests 2>&1 || true
   rules:
-    - when: always
+    - if: '$CI_PIPELINE_SOURCE'
