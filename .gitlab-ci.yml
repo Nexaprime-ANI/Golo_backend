@@ -69,6 +69,7 @@ sonarqube:
         -Dsonar.exclusions=node_modules/**,dist/**,coverage/**,*.js \
         -Dsonar.typescript.tsconfigPath=tsconfig.json \
         -Dsonar.coverage.exclusions=**/*.spec.ts,**/*.test.ts,src/main.ts \
+        -Dsonar.organization=nexaprime-ani \
         -Dsonar.host.url=${SONAR_HOST_URL} \
         -Dsonar.login=${SONAR_TOKEN}
   allow_failure: true
