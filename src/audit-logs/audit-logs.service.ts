@@ -27,7 +27,12 @@ export class AuditLogsService {
   async getAllLogs(page: number = 1, limit: number = 50) {
     const skip = (page - 1) * limit;
     const [logs, total] = await Promise.all([
-      this.auditLogModel.find().sort({ createdAt: -1 }).skip(skip).limit(limit).exec(),
+      this.auditLogModel
+        .find()
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .exec(),
       this.auditLogModel.countDocuments(),
     ]);
     return { logs, total };

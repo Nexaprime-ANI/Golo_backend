@@ -2,6 +2,7 @@ import { Logger, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import configuration from './config/configuration';
+import { AnalyticsModule } from './analytics/analytics.module';
 import { KafkaModule } from './kafka/kafka.module';
 import { AdsModule } from './ads/ads.module';
 import { UsersModule } from './users/users.module';
@@ -56,8 +57,9 @@ const logger = new Logger('MongoDB');
     CallsModule,
     ReportsModule,
     AuditLogsModule,
+    AnalyticsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule { }
+export class AppModule {}
