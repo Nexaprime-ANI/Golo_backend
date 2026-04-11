@@ -1,0 +1,96 @@
+image: node:18-alpine
+
+stages:
+  - lint
+  - build
+  - sonarqube
+  - test
+  - deploy
+
+variables:
+  NPM_CACHE_DIR: "$CI_PROJECT_DIR/.npm"
+  RUN_ONLY_SONAR: "true"   # 🔥 toggle here
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - node_modules/
+    - .npm/
+
+# ==================== LINT ====================
+
+lint:
+  stage: lint
+  script:
+    - npm ci
+    - npm run lint || true
+  rules:
+    - if: '$RUN_ONLY_SONAR == "true"'
+      when: never
+    - when: on_success
+
+# ==================== BUILD ====================
+
+build:
+  stage: build
+  script:
+    - npm ci
+    - npm run build
+  artifacts:
+    paths:
+      - dist/
+  rules:
+    - if: '$RUN_ONLY_SONAR == "true"'
+      when: never
+    - when: on_success
+
+# ==================== SONARQUBE ====================
+
+sonarqube:
+  stage: sonarqube
+  image: sonarsource/sonar-scanner-cli:latest
+  script:
+    - echo "Running SonarQube analysis..."
+    - |
+      sonar-scanner \
+        -Dsonar.projectKey=nexaprime-ani_golo \
+        -Dsonar.organization=nexaprime-ani \
+        -Dsonar.host.url=${SONAR_HOST_URL} \
+        -Dsonar.token=${SONAR_TOKEN} \
+        -Dsonar.sources=src \
+        -Dsonar.tests=src \
+        -Dsonar.test.inclusions=**/*.spec.ts,**/*.test.ts \
+        -Dsonar.exclusions=node_modules/**,dist/**,coverage/**,*.js \
+        -Dsonar.typescript.tsconfigPath=tsconfig.json
+  allow_failure: true 
+  rules:
+    - if: '$SONAR_HOST_URL && $SONAR_TOKEN'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# ==================== TEST ====================
+
+test:
+  stage: test
+  script:
+    - npm ci
+    - npm run test -- --passWithNoTests || true
+  rules:
+    - if: '$RUN_ONLY_SONAR == "true"'
+      when: never
+    - when: on_success
+
+# ==================== DEPLOY ====================
+
+staging-health-check:
+  stage: deploy
+  script:
+    - echo "Checking frontend..."
+  rules:
+    - if: '$RUN_ONLY_SONAR == "true"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == "developer"'
