@@ -62,14 +62,16 @@ codacy:
   script:
     - echo "Running Codacy analysis..."
 
-    - docker run --rm \
+    - |
+      docker run --rm \
         -e CODACY_PROJECT_TOKEN=$CODACY_PROJECT_TOKEN \
         -e CI_COMMIT_BRANCH=$CI_COMMIT_BRANCH \
         -e CI_COMMIT_SHA=$CI_COMMIT_SHA \
         -v $(pwd):/code \
         codacy/codacy-analysis-cli:latest analyze
 
-    - docker run --rm \
+    - |
+      docker run --rm \
         -e CODACY_PROJECT_TOKEN=$CODACY_PROJECT_TOKEN \
         -v $(pwd):/code \
         codacy/codacy-analysis-cli:latest upload-results
