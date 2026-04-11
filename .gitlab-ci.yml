@@ -9,7 +9,7 @@ stages:
 
 variables:
   NPM_CACHE_DIR: "$CI_PROJECT_DIR/.npm"
-  RUN_ONLY_SONAR: "true"   # 🔥 toggle here
+  RUN_ONLY_SONAR: "true"   
 
 workflow:
   rules:
@@ -70,7 +70,7 @@ sonarqube:
   allow_failure: true 
   rules:
     - if: '$SONAR_HOST_URL && $SONAR_TOKEN'
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$RUN_ONLY_SONAR'
 
 # ==================== TEST ====================
 
