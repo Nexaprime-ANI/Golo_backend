@@ -3,7 +3,7 @@ image: node:18-alpine
 stages:
   - lint
   - build
-  - sonarqube
+  - codacy
   - test
   - deploy
 
@@ -51,25 +51,22 @@ build:
 
 # ==================== SONARQUBE ====================
 
-sonarqube:
-  stage: sonarqube
-  image: sonarsource/sonar-scanner-cli:latest
+codacy:
+  stage: codacy
+  image: codacy/codacy-analysis-cli:latest
   script:
-    - echo "Running SonarQube analysis..."
-    - |
-      sonar-scanner \
-        -Dsonar.projectKey=nexaprime-ani_golo \
-        -Dsonar.organization=nexaprime-ani \
-        -Dsonar.host.url=${SONAR_HOST_URL} \
-        -Dsonar.token=${SONAR_TOKEN} \
-        -Dsonar.sources=src \
-        -Dsonar.tests=src \
-        -Dsonar.test.inclusions=**/*.spec.ts,**/*.test.ts \
-        -Dsonar.exclusions=node_modules/**,dist/**,coverage/**,*.js \
-        -Dsonar.typescript.tsconfigPath=tsconfig.json
+    - echo "Running Codacy analysis..."
+
+    # Run analysis
+    - codacy-analysis-cli analyze
+
+    # Upload results
+    - codacy-analysis-cli upload-results
+  variables:
+    CODACY_PROJECT_TOKEN: $CODACY_PROJECT_TOKEN
   allow_failure: true 
   rules:
-    - if: '$SONAR_HOST_URL && $SONAR_TOKEN'
+    - if: '$CI_COMMIT_BRANCH == "feature"'
 
 # ==================== TEST ====================
 
