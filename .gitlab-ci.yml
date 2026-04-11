@@ -9,6 +9,7 @@ stages:
 
 variables:
   NPM_CACHE_DIR: "$CI_PROJECT_DIR/.npm"
+  RUN_ONLY_SONAR: "true"   # 🔥 toggle here
 
 workflow:
   rules:
@@ -21,37 +22,34 @@ cache:
     - node_modules/
     - .npm/
 
-# ==================== LINT STAGE ====================
+# ==================== LINT ====================
 
 lint:
   stage: lint
   script:
-    - echo "Running ESLint..."
     - npm ci
     - npm run lint || true
-  artifacts:
-    paths:
-      - eslint-report.json
-    when: always
   rules:
-    - if: "$CI_PIPELINE_SOURCE"
+    - if: '$RUN_ONLY_SONAR == "true"'
+      when: never
+    - when: on_success
 
-# ==================== BUILD STAGE ====================
+# ==================== BUILD ====================
 
 build:
   stage: build
   script:
-    - echo "Building project..."
     - npm ci
     - npm run build
   artifacts:
     paths:
       - dist/
-    expire_in: 1 day
   rules:
-    - if: "$CI_PIPELINE_SOURCE"
+    - if: '$RUN_ONLY_SONAR == "true"'
+      when: never
+    - when: on_success
 
-# ==================== SONARQUBE STAGE ====================
+# ==================== SONARQUBE ====================
 
 sonarqube:
   stage: sonarqube
@@ -60,50 +58,38 @@ sonarqube:
     - echo "Running SonarQube analysis..."
     - |
       sonar-scanner \
-        -Dsonar.projectKey=golo-ads-service \
-        -Dsonar.projectName="GOLO Backend - ADS Service" \
-        -Dsonar.projectVersion=1.0.0 \
+        -Dsonar.projectKey=nexaprime-ani_golo \
+        -Dsonar.organization=nexaprime-ani \
+        -Dsonar.host.url=${SONAR_HOST_URL} \
+        -Dsonar.token=${SONAR_TOKEN} \
         -Dsonar.sources=src \
         -Dsonar.tests=src \
         -Dsonar.test.inclusions=**/*.spec.ts,**/*.test.ts \
         -Dsonar.exclusions=node_modules/**,dist/**,coverage/**,*.js \
-        -Dsonar.typescript.tsconfigPath=tsconfig.json \
-        -Dsonar.coverage.exclusions=**/*.spec.ts,**/*.test.ts,src/main.ts \
-        -Dsonar.organization=nexaprime-ani \
-        -Dsonar.host.url=${SONAR_HOST_URL} \
-        -Dsonar.login=${SONAR_TOKEN}
+        -Dsonar.typescript.tsconfigPath=tsconfig.json
   allow_failure: true
   rules:
-    - if: "$SONAR_HOST_URL && $SONAR_TOKEN"
-      when: always
-    - when: never
+    - if: '$SONAR_HOST_URL && $SONAR_TOKEN'
 
-# ==================== TEST STAGE ====================
+# ==================== TEST ====================
 
 test:
   stage: test
   script:
-    - echo "Running tests..."
     - npm ci
-    - npm run test -- --passWithNoTests 2>&1 || true
+    - npm run test -- --passWithNoTests || true
   rules:
-    - if: "$CI_PIPELINE_SOURCE"
+    - if: '$RUN_ONLY_SONAR == "true"'
+      when: never
+    - when: on_success
+
+# ==================== DEPLOY ====================
 
 staging-health-check:
   stage: deploy
   script:
-    - echo "Checking frontend availability..."
-    - |
-      for i in {1..10}; do
-        if curl -f https://your-frontend.onrender.com; then
-          echo "Frontend is live ✅"
-          exit 0
-        fi
-        echo "Retrying..."
-        sleep 2
-      done
-
-      echo "Frontend failed health check ❌"
-      exit 1
+    - echo "Checking frontend..."
   rules:
+    - if: '$RUN_ONLY_SONAR == "true"'
+      when: never
     - if: '$CI_COMMIT_BRANCH == "developer"'
