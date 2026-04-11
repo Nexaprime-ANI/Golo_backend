@@ -23,9 +23,9 @@ export class ChatsService {
 
   constructor(
     @InjectModel(Conversation.name)
-    private conversationModel: Model<ConversationDocument>,
-    @InjectModel(Message.name) private messageModel: Model<MessageDocument>,
-    @InjectModel(Ad.name) private adModel: Model<AdDocument>,
+    private readonly conversationModel: Model<ConversationDocument>,
+    @InjectModel(Message.name) private readonly messageModel: Model<MessageDocument>,
+    @InjectModel(Ad.name) private readonly adModel: Model<AdDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
   ) {}
 

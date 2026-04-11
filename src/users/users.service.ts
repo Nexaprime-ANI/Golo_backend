@@ -203,6 +203,7 @@ export class UsersService {
     this.logger.log(`Login attempt: ${loginDto.email}`);
 
     const user = await this.userModel.findOne({ email: loginDto.email }).exec();
+
     if (!user) {
       this.logger.warn(`Login failed - user not found: ${loginDto.email}`);
       throw new UnauthorizedException('Invalid credentials');
@@ -256,8 +257,7 @@ export class UsersService {
 
     const adminEmail = this.configService.get<string>('ADMIN_EMAIL');
     if (
-      adminEmail &&
-      user.email.toLowerCase() === adminEmail.toLowerCase() &&
+      user.email.toLowerCase() === adminEmail?.toLowerCase() &&
       user.role !== UserRole.ADMIN
     ) {
       this.logger.log(`Auto-promoting ${user.email} to ADMIN based on config`);
@@ -414,7 +414,7 @@ export class UsersService {
       });
 
       const user = await this.userModel.findById(payload.sub).exec();
-      if (!user || !user.refreshTokens.includes(refreshToken)) {
+      if (!user?.refreshTokens.includes(refreshToken)) {
         throw new UnauthorizedException('Invalid refresh token');
       }
 
@@ -426,7 +426,8 @@ export class UsersService {
 
       return { accessToken };
     } catch (error) {
-      this.logger.error(`Refresh token failed: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Refresh token failed: ${message}`);
       throw new UnauthorizedException('Invalid refresh token');
     }
   }
@@ -545,7 +546,7 @@ export class UsersService {
     try {
       this.logger.log(`Find by ID: ${userId}`);
 
-      if (!userId.match(/^[0-9a-fA-F]{24}$/)) {
+      if (!new RegExp(/^[0-9a-fA-F]{24}$/).exec(userId)) {
         throw new BadRequestException('Invalid user ID format');
       }
 
@@ -555,10 +556,12 @@ export class UsersService {
       }
       return this.toResponseDto(user);
     } catch (error) {
-      if (error.name === 'CastError') {
+      const err = error as { name?: string; message?: string };
+      if (err.name === 'CastError') {
         throw new BadRequestException('Invalid user ID format');
       }
-      this.logger.error(`Error in findById: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error in findById: ${message}`);
       throw error;
     }
   }
@@ -567,7 +570,7 @@ export class UsersService {
     try {
       this.logger.log(`Getting user by ID: ${userId}`);
 
-      if (!userId || !userId.match(/^[0-9a-fA-F]{24}$/)) {
+      if (!new RegExp(/^[0-9a-fA-F]{24}$/).exec(userId)) {
         this.logger.warn(`Invalid user ID format: ${userId}`);
         throw new BadRequestException('Invalid user ID format');
       }

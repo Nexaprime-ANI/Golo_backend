@@ -47,7 +47,7 @@ export class ReportsGateway
   server: Server;
 
   private readonly logger = new Logger(ReportsGateway.name);
-  private adminSockets = new Set<string>();
+  private readonly adminSockets = new Set<string>();
 
   constructor(
     private readonly jwtService: JwtService,

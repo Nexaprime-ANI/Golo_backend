@@ -68,7 +68,8 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       this.logger.debug(`Socket connected for user ${userId}: ${client.id}`);
     } catch (error) {
-      this.logger.warn(`Socket auth failed: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Socket auth failed: ${message}`);
       client.emit('chat_error', { message: 'Authentication failed' });
       client.disconnect();
     }
