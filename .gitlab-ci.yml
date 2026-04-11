@@ -58,15 +58,18 @@ sonarqube:
     - echo "Running SonarQube analysis..."
     - |
       sonar-scanner \
-        -Dsonar.projectKey=nexaprime-ani_golo \
-        -Dsonar.organization=nexaprime-ani \
-        -Dsonar.host.url=${SONAR_HOST_URL} \
-        -Dsonar.token=${SONAR_TOKEN} \
+        -Dsonar.projectKey=golo-ads-service \
+        -Dsonar.projectName="GOLO Backend - ADS Service" \
+        -Dsonar.projectVersion=1.0.0 \
         -Dsonar.sources=src \
         -Dsonar.tests=src \
         -Dsonar.test.inclusions=**/*.spec.ts,**/*.test.ts \
         -Dsonar.exclusions=node_modules/**,dist/**,coverage/**,*.js \
-        -Dsonar.typescript.tsconfigPath=tsconfig.json
+        -Dsonar.typescript.tsconfigPath=tsconfig.json \
+        -Dsonar.coverage.exclusions=**/*.spec.ts,**/*.test.ts,src/main.ts \
+        -Dsonar.organization=nexaprime-ani \
+        -Dsonar.host.url=${SONAR_HOST_URL} \
+        -Dsonar.login=${SONAR_TOKEN}
   allow_failure: true 
   rules:
     - if: '$SONAR_HOST_URL && $SONAR_TOKEN'
