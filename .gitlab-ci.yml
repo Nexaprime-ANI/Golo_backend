@@ -67,9 +67,10 @@ sonarqube:
         -Dsonar.test.inclusions=**/*.spec.ts,**/*.test.ts \
         -Dsonar.exclusions=node_modules/**,dist/**,coverage/**,*.js \
         -Dsonar.typescript.tsconfigPath=tsconfig.json
-  allow_failure: true
+  allow_failure: true 
   rules:
     - if: '$SONAR_HOST_URL && $SONAR_TOKEN'
+    - if: '$CI_COMMIT_BRANCH == "main"'
 
 # ==================== TEST ====================
 
