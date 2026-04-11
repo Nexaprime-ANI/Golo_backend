@@ -91,17 +91,18 @@ test:
 staging-health-check:
   stage: deploy
   script:
-    - echo "Checking staging health..."
+    - echo "Checking frontend availability..."
     - |
       for i in {1..10}; do
-       if curl -f https://your-app.onrender.com/health; then
-       echo "App is healthy ✅"
-      exit 0
-      fi
-      echo "Retrying..."
-      sleep 2
+        if curl -f https://your-frontend.onrender.com; then
+          echo "Frontend is live ✅"
+          exit 0
+        fi
+        echo "Retrying..."
+        sleep 2
       done
-      echo "App failed health check ❌"
+
+      echo "Frontend failed health check ❌"
       exit 1
   rules:
     - if: '$CI_COMMIT_BRANCH == "develop"'
