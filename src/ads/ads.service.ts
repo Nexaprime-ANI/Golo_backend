@@ -1,3 +1,4 @@
+// ...existing code...
 import {
   Injectable,
   Logger,
@@ -18,7 +19,12 @@ import { KafkaService } from '../kafka/kafka.service';
 import { KAFKA_TOPICS } from '../common/constants/kafka-topics';
 import { v4 as uuidv4 } from 'uuid';
 import { User, UserDocument } from '../users/schemas/user.schema';
-import { Report, ReportDocument, ReportReason, ReportStatus } from './schemas/report.schema';
+import {
+  Report,
+  ReportDocument,
+  ReportReason,
+  ReportStatus,
+} from './schemas/report.schema';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import { RedisService } from '../common/services/redis.service';
@@ -26,8 +32,276 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 @Injectable()
 export class AdsService implements OnModuleInit, OnModuleDestroy {
+  /**
+   * Get a single report by reportId, wit  async getReportByReportId(
+    re  async getReportByReportId(reportId: string): Promise<Record<string, unknown> | null> {
+    try {
+      this.logger.log(`Fetching enriched report for reportId: ${reportId}`);
+      const results = await this.reportModel.aggregate([
+        { $match: { reportId } },
+        {
+          $lookup: {
+            from: 'ads',
+            localField: 'adId',
+            foreignField: 'adId',
+            as: 'ad',
+          },
+        },
+        { $unwind: { path: '$ad', preserveNullAndEmptyArrays: true } },
+        {
+          $addFields: {
+            adUserObjectId: {
+              $cond: [
+                {
+                  $regexMatch: {
+                    input: '$ad.userId',
+                    regex: /^[0-9a-fA-F]{24}$/,
+                  },
+                },
+                { $toObjectId: '$ad.userId' },
+                null,
+              ],
+            },
+            adUserIdString: '$ad.userId',
+          },
+        },
+        {
+          $lookup: {
+            from: 'users',
+            let: { adUserObjectId: '$adUserObjectId' },
+            pipeline: [
+              { $match: { $expr: { $eq: ['$_id', '$$adUserObjectId'] } } },
+            ],
+            as: 'uploader',
+          },
+        },
+        { $unwind: { path: '$uploader', preserveNullAndEmptyArrays: true } },
+        // Always set uploader.userId from uploader._id if uploader exists
+        {
+          $addFields: {
+            'uploader.userId': {
+              $cond: [
+                { $ifNull: ['$uploader._id', false] },
+                { $toString: '$uploader._id' },
+                '$uploader.userId',
+              ],
+            },
+          },
+        },
+        {
+          $lookup: {
+            from: 'ads',
+            let: { uploaderUserId: '$uploader._id' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $and: [
+                      { $eq: [{ $toObjectId: '$userId' }, '$$uploaderUserId'] },
+                      { $eq: ['$status', 'active'] },
+                    ],
+                  },
+                },
+              },
+            ],
+            as: 'uploaderActiveAds',
+          },
+        },
+        {
+          $addFields: {
+            uploader: {
+              $cond: [
+                { $ifNull: ['$uploader.userId', false] },
+                '$uploader',
+                {
+                  $cond: [
+                    {
+                      $and: [
+                        { $ifNull: ['$adUserIdString', false] },
+                        {
+                          $regexMatch: {
+                            input: '$adUserIdString',
+                            regex: /^[0-9a-fA-F]{24}$/,
+                          },
+                        },
+                      ],
+                    },
+                    {
+                      $let: {
+                        vars: {
+                          fallbackUserId: { $toObjectId: '$adUserIdString' },
+                        },
+                        in: {
+                          $mergeObjects: [
+                            {
+                              name: 'No user info',
+                              accountType: '-',
+                              role: '-',
+                              email: '-',
+                              userId: '$adUserIdString',
+                            },
+                            {
+                              $arrayElemAt: [
+                                {
+                                  $map: {
+                                    input: {
+                                      $filter: {
+                                        input: '$$ROOT',
+                                        as: 'root',
+                                        cond: {
+                                          $eq: [
+                                            '$$root._id',
+                                            '$$fallbackUserId',
+                                          ],
+                                        },
+                                      },
+                                    },
+                                    as: 'user',
+                                    in: {
+                                      name: '$$user.name',
+                                      accountType: '$$user.accountType',
+                                      role: '$$user.role',
+                                      email: '$$user.email',
+                                      userId: { $toString: '$$user._id' },
+                                    },
+                                  },
+                                },
+                                0,
+                              ],
+                            },
+                          ],
+                        },
+                      },
+                    },
+                    {
+                      name: 'No user info',
+                      accountType: '-',
+                      role: '-',
+                      email: '-',
+                      userId: '-',
+                    },
+                  ],
+                },
+              ],
+            },
+            uploaderListingCount: {
+              $size: { $ifNull: ['$uploaderActiveAds', []] },
+            },
+          },
+        },
+        {
+          $project: {
+            reportId: 1,
+            adId: 1,
+            reportedBy: 1,
+            reason: 1,
+            description: 1,
+            status: 1,
+            adminNotes: 1,
+            createdAt: 1,
+            reviewedAt: 1,
+            // Ad details
+            'ad.title': 1,
+            'ad.price': 1,
+            'ad.category': 1,
+            'ad.subCategory': 1,
+            'ad.images': 1,
+            'ad.status': 1,
+            'ad.reportCount': 1,
+            'ad.userId': 1,
+            // Uploader details
+            'uploader.name': 1,
+            'uploader.accountType': 1,
+            'uploader.role': 1,
+            'uploader.email': 1,
+            'uploader.userId': 1,
+            uploaderListingCount: 1,
+          },
+        },
+      ]);
+      const result = results[0] || null;
+      // Always ensure uploader.userId is present if uploader exists
+      if (
+        result &&
+        result.uploader &&
+        !result.uploader.userId &&
+        result.uploader.email
+      ) {
+        if (result.ad?.userId) {
+          // Try to use ad.userId if uploader is the ad owner
+          result.uploader.userId = result.ad.userId;
+        } else if (result.uploader._id) {
+          // Fallback: use uploader._id if present
+          result.uploader.userId = result.uploader._id.toString();
+        }
+      }
+      // FINAL fallback: if uploader.userId is missing or '-', try direct query
+      if (
+        result &&
+        (!result.uploader?.userId ||
+          result.uploader.userId === '-' ||
+          result.uploader.name === 'No user info')
+      ) {
+        // Try to fetch user by ad.userId directly
+        const adUserId =
+          result.ad?.userId ? result.ad.userId : null;
+        if (adUserId && /^[0-9a-fA-F]{24}$/.test(adUserId)) {
+          const userDoc = await this.userModel.findById(adUserId).lean();
+          if (userDoc) {
+            result.uploader = {
+              name: userDoc.name,
+              accountType: userDoc.accountType,
+              role: userDoc.role,
+              email: userDoc.email,
+              userId: userDoc._id.toString(),
+            };
+          }
+        }
+      }
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error fetching enriched report: ${message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Get real-time report stats for admin panel cards
+   */
+  public async getReportStats() {
+    const [
+      total,
+      pending,
+      reviewed,
+      actionTaken,
+      policyViolations,
+      resolved24h,
+    ] = await Promise.all([
+      this.reportModel.countDocuments(),
+      this.reportModel.countDocuments({ status: 'pending' }),
+      this.reportModel.countDocuments({ status: 'reviewed' }),
+      this.reportModel.countDocuments({ status: 'action_taken' }),
+      this.reportModel.countDocuments({ reason: 'policy_violation' }),
+      this.reportModel.countDocuments({
+        status: 'action_taken',
+        reviewedAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+      }),
+    ]);
+    return {
+      total,
+      pending,
+      reviewed,
+      actionTaken,
+      policyViolations,
+      resolved24h,
+    };
+  }
   private readonly logger = new Logger(AdsService.name);
-  private emailTransporter: any;
+  private readonly emailTransporter: {
+    verify: (callback: (error: Error | null) => void) => void;
+    sendMail: (opts: unknown) => Promise<unknown>;
+  } | null = null;
   private emailEnabled: boolean;
   private expirySchedulerInterval: NodeJS.Timeout | null = null;
 
@@ -39,18 +313,19 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
   constructor(
     @InjectModel(Ad.name) private readonly adModel: Model<AdDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
-    @InjectModel(Report.name) private readonly reportModel: Model<ReportDocument>,
+    @InjectModel(Report.name)
+    private readonly reportModel: Model<ReportDocument>,
     private readonly auditLogsService: AuditLogsService,
-    private configService: ConfigService,
+    private readonly configService: ConfigService,
     public redisService: RedisService, // Make public for controller access
-    private eventEmitter: EventEmitter2,
+    private readonly eventEmitter: EventEmitter2,
 
     // ✅ Kafka OPTIONAL
     @Optional() private readonly kafkaService?: KafkaService,
   ) {
     // Initialize email transporter
     this.emailEnabled = !!this.configService.get('EMAIL_USER');
-    
+
     if (this.emailEnabled) {
       this.emailTransporter = nodemailer.createTransport({
         host: this.configService.get('EMAIL_HOST'),
@@ -62,16 +337,20 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
         },
       });
 
-      this.emailTransporter.verify((error: any, success: any) => {
+      this.emailTransporter.verify((error: Error | null) => {
         if (error) {
-          this.logger.error(`Email service verification failed: ${error.message}`);
+          this.logger.error(
+            `Email service verification failed: ${error.message}`,
+          );
           this.emailEnabled = false;
         } else {
           this.logger.log('✅ Email service ready and connected');
         }
       });
     } else {
-      this.logger.warn('⚠️ Email service not configured - emails will be logged only');
+      this.logger.warn(
+        '⚠️ Email service not configured - emails will be logged only',
+      );
     }
   }
 
@@ -120,8 +399,9 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
         // Invalidate cache since ad listings changed
         await this.invalidateAdsCache();
       }
-    } catch (error: any) {
-      this.logger.error(`Expiry cleanup failed: ${error.message}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Expiry cleanup failed: ${message}`);
     }
   }
 
@@ -132,19 +412,21 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
   async deactivateExpiredAds(): Promise<number> {
     const now = new Date();
 
-    const result = await this.adModel.updateMany(
-      {
-        status: 'active',
-        expiryDate: { $lte: now },
-      },
-      {
-        $set: {
-          status: 'expired',
-          expiredAt: now,
-          updatedAt: now,
+    const result = await this.adModel
+      .updateMany(
+        {
+          status: 'active',
+          expiryDate: { $lte: now },
         },
-      },
-    ).exec();
+        {
+          $set: {
+            status: 'expired',
+            expiredAt: now,
+            updatedAt: now,
+          },
+        },
+      )
+      .exec();
 
     const count = result.modifiedCount ?? 0;
     if (count > 0) {
@@ -185,18 +467,24 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
     // Also delete associated reports
     const adIdsToDelete = adsToDelete.map((ad) => ad.adId).filter(Boolean);
     if (adIdsToDelete.length > 0) {
-      await this.reportModel.deleteMany({ adId: { $in: adIdsToDelete } }).exec();
+      await this.reportModel
+        .deleteMany({ adId: { $in: adIdsToDelete } })
+        .exec();
     }
 
     // Permanently delete the ads
-    const result = await this.adModel.deleteMany({
-      status: 'expired',
-      expiredAt: { $lte: gracePeriodCutoff },
-    }).exec();
+    const result = await this.adModel
+      .deleteMany({
+        status: 'expired',
+        expiredAt: { $lte: gracePeriodCutoff },
+      })
+      .exec();
 
     const count = result.deletedCount ?? 0;
     if (count > 0) {
-      this.logger.log(`🗑️ Permanently deleted ${count} expired ads (grace period ended)`);
+      this.logger.log(
+        `🗑️ Permanently deleted ${count} expired ads (grace period ended)`,
+      );
 
       // Emit Kafka events
       if (this.kafkaService) {
@@ -218,14 +506,17 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
      CACHE KEY HELPERS
   ============================================================ */
 
-  public getCacheKey(prefix: string, ...parts: (string | number | undefined)[]): string {
-    const validParts = parts.filter(p => p !== undefined && p !== null);
+  public getCacheKey(
+    prefix: string,
+    ...parts: (string | number | undefined)[]
+  ): string {
+    const validParts = parts.filter((p) => p !== undefined && p !== null);
     return `golo:${prefix}:${validParts.join(':')}`;
   }
 
   public async invalidateAdsCache(): Promise<void> {
     if (!this.redisService.isEnabled()) return;
-    
+
     // Invalidate homepage and category caches when ads change
     await this.redisService.deleteByPattern('golo:ads:homepage:*');
     await this.redisService.deleteByPattern('golo:ads:category:*');
@@ -247,78 +538,119 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    let categorySpecificData: any = {};
-    const payload: any = createAdDto as any;
+    let categorySpecificData: Record<string, unknown> = {};
+    const payload = createAdDto as unknown as Record<string, unknown>;
 
     switch (createAdDto.category) {
       case 'Vehicle':
-        categorySpecificData = payload.vehicleData || {};
+        categorySpecificData =
+          (payload.vehicleData as Record<string, unknown>) || {};
         break;
       case 'Property':
-        categorySpecificData = payload.propertyData || {};
+        categorySpecificData =
+          (payload.propertyData as Record<string, unknown>) || {};
         break;
       case 'Service':
-        categorySpecificData = payload.serviceData || {};
+        categorySpecificData =
+          (payload.serviceData as Record<string, unknown>) || {};
         break;
       case 'Mobiles':
-        categorySpecificData = payload.mobileData || {};
+        categorySpecificData =
+          (payload.mobileData as Record<string, unknown>) || {};
         break;
       case 'Electronics':
       case 'Electronics & Home appliances':
-        categorySpecificData = payload.electronicsData || {};
+        categorySpecificData =
+          (payload.electronicsData as Record<string, unknown>) || {};
         break;
       case 'Furniture':
-        categorySpecificData = payload.furnitureData || {};
+        categorySpecificData =
+          (payload.furnitureData as Record<string, unknown>) || {};
         break;
       case 'Education':
-        categorySpecificData = payload.educationData || {};
+        categorySpecificData =
+          (payload.educationData as Record<string, unknown>) || {};
         break;
       case 'Pets':
-        categorySpecificData = payload.petsData || {};
+        categorySpecificData =
+          (payload.petsData as Record<string, unknown>) || {};
         break;
       case 'Matrimonial':
-        categorySpecificData = payload.matrimonialData || {};
+        categorySpecificData =
+          (payload.matrimonialData as Record<string, unknown>) || {};
         break;
       case 'Business':
-        categorySpecificData = payload.businessData || {};
+        categorySpecificData =
+          (payload.businessData as Record<string, unknown>) || {};
         break;
       case 'Travel':
-        categorySpecificData = payload.travelData || {};
+        categorySpecificData =
+          (payload.travelData as Record<string, unknown>) || {};
         break;
       case 'Astrology':
-        categorySpecificData = payload.astrologyData || {};
+        categorySpecificData =
+          (payload.astrologyData as Record<string, unknown>) || {};
         break;
       case 'Employment':
-        categorySpecificData = payload.employmentData || {};
+        categorySpecificData =
+          (payload.employmentData as Record<string, unknown>) || {};
         break;
       case 'Lost & Found':
-        categorySpecificData = payload.lostFoundData || payload.lostAndFoundData || {};
+        categorySpecificData =
+          (payload.lostFoundData as Record<string, unknown>) ||
+          (payload.lostAndFoundData as Record<string, unknown>) ||
+          {};
         break;
       case 'Personal':
-        categorySpecificData = payload.personalData || {};
+        categorySpecificData =
+          (payload.personalData as Record<string, unknown>) || {};
         break;
       case 'Public Notice':
-        categorySpecificData = payload.publicNoticeData || {};
+        categorySpecificData =
+          (payload.publicNoticeData as Record<string, unknown>) || {};
         break;
       case 'Greetings & Tributes':
-        categorySpecificData = payload.greetingsData || payload.otherData || {};
+        categorySpecificData =
+          (payload.greetingsData as Record<string, unknown>) ||
+          (payload.otherData as Record<string, unknown>) ||
+          {};
         break;
       case 'Other':
-        categorySpecificData = payload.otherData || {};
+        categorySpecificData =
+          (payload.otherData as Record<string, unknown>) || {};
         break;
     }
 
-    if (!categorySpecificData || Object.keys(categorySpecificData).length === 0) {
-      categorySpecificData = payload.categorySpecificData || {};
+    if (
+      !categorySpecificData ||
+      Object.keys(categorySpecificData).length === 0
+    ) {
+      categorySpecificData =
+        (payload.categorySpecificData as Record<string, unknown>) || {};
     }
 
     this.validateCategoryData(createAdDto.category, categorySpecificData);
 
-    const expiryDate =
-      createAdDto.expiryDate ||
-      new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    // If the user selected specific scheduling dates, expire the ad at the end
+    // of the last chosen day. Otherwise, fall back to an explicit expiryDate or
+    // the default 30-day window.
+    const expiryDate = (() => {
+      if (createAdDto.selectedDates && createAdDto.selectedDates.length > 0) {
+        const lastDate = new Date(
+          Math.max(
+            ...createAdDto.selectedDates.map((d) => new Date(d).getTime()),
+          ),
+        );
+        lastDate.setHours(23, 59, 59, 999);
+        return lastDate;
+      }
+      return (
+        createAdDto.expiryDate ||
+        new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+      );
+    })();
 
-    const adData: any = {
+    const adData: Record<string, unknown> = {
       ...createAdDto,
       categorySpecificData,
       adId: uuidv4(),
@@ -342,9 +674,13 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
      ADMIN
   ============================================================ */
 
-  async adminDeleteAd(adId: string, adminId?: string, adminEmail?: string): Promise<void> {
-    const ad: any = await this.adModel.findOneAndDelete({ adId }).exec();
-    
+  async adminDeleteAd(
+    adId: string,
+    adminId?: string,
+    adminEmail?: string,
+  ): Promise<void> {
+    const ad = await this.adModel.findOneAndDelete({ adId }).exec();
+
     if (adminId && adminEmail && ad) {
       await this.auditLogsService.log({
         action: 'AD_DELETED_BY_ADMIN',
@@ -352,12 +688,20 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
         adminEmail,
         targetId: adId,
         targetType: 'Ad',
-        details: { title: ad.title, category: ad.category }
+        details: {
+          title: (ad as unknown as Ad).title,
+          category: (ad as unknown as Ad).category,
+        },
       });
     }
   }
 
-  async adminUpdateAd(adId: string, updateData: UpdateAdDto, adminId?: string, adminEmail?: string): Promise<Ad> {
+  async adminUpdateAd(
+    adId: string,
+    updateData: UpdateAdDto,
+    adminId?: string,
+    adminEmail?: string,
+  ): Promise<Ad> {
     const updatedAd = await this.adModel
       .findOneAndUpdate(
         { adId },
@@ -377,7 +721,7 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
         adminEmail,
         targetId: adId,
         targetType: 'Ad',
-        details: { updateData }
+        details: { updateData },
       });
     }
 
@@ -392,22 +736,20 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
      USER VERIFY
   ============================================================ */
 
-  async verifyUser(userId: any): Promise<boolean> {
+  async verifyUser(userId: unknown): Promise<boolean> {
     try {
       if (!userId) return false;
 
       const userIdStr = String(userId);
 
-      if (!userIdStr.match(/^[0-9a-fA-F]{24}$/)) return false;
+      if (!new RegExp(/^[0-9a-fA-F]{24}$/).exec(userIdStr)) return false;
 
-      const user = await this.userModel
-        .findById(userIdStr)
-        .lean()
-        .exec();
+      const user = await this.userModel.findById(userIdStr).lean().exec();
 
       return !!user;
-    } catch (error: any) {
-      this.logger.error(`User verify error: ${error.message}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`User verify error: ${message}`);
       return false;
     }
   }
@@ -461,7 +803,12 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
 
   async searchAds(
     query: string,
-    filters: any = {},
+    filters: Partial<{
+      category?: string;
+      location?: string;
+      minPrice?: number;
+      maxPrice?: number;
+    }> = {},
     page = 1,
     limit = 10,
     sortBy = 'createdAt',
@@ -471,19 +818,42 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
   ): Promise<{ ads: Ad[]; total: number }> {
     const skip = (page - 1) * limit;
 
-    const mongoQuery: any = { status: 'active' };
+    const mongoQuery: Record<string, unknown> = { status: 'active' };
 
     if (filters?.category) mongoQuery.category = filters.category;
-    if (filters?.location) mongoQuery.location = filters.location;
-    if (typeof filters?.minPrice === 'number') mongoQuery.price = { ...(mongoQuery.price || {}), $gte: filters.minPrice };
-    if (typeof filters?.maxPrice === 'number') mongoQuery.price = { ...(mongoQuery.price || {}), $lte: filters.maxPrice };
+    if (filters?.location && String(filters.location).trim()) {
+      const normalizedLocation = String(filters.location).trim();
+      const escapedLocation = normalizedLocation.replaceAll(
+        /[.*+?^${}()|[\]\\]/g,
+        String.raw`\$&`,
+      );
+      const locationRegex = new RegExp(escapedLocation, 'i');
+
+      mongoQuery.$or = [
+        { location: locationRegex },
+        { city: locationRegex },
+        { state: locationRegex },
+        { pincode: locationRegex },
+        { cities: { $elemMatch: { $regex: locationRegex } } },
+      ];
+    }
+    if (typeof filters?.minPrice === 'number')
+      mongoQuery.price = {
+        ...(mongoQuery.price as Record<string, unknown>),
+        $gte: filters.minPrice,
+      };
+    if (typeof filters?.maxPrice === 'number')
+      mongoQuery.price = {
+        ...(mongoQuery.price as Record<string, unknown>),
+        $lte: filters.maxPrice,
+      };
 
     if (query && query.trim().length > 0) {
       // Prefer text index when available
       mongoQuery.$text = { $search: query };
     }
 
-    let sort: any = {};
+    const sort: Record<string, SortOrder> = {};
     const countQuery = { ...mongoQuery };
 
     if (sortBy === 'distance' && lat !== undefined && lng !== undefined) {
@@ -499,12 +869,7 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
     }
 
     const [ads, total] = await Promise.all([
-      this.adModel
-        .find(mongoQuery)
-        .sort(sort)
-        .skip(skip)
-        .limit(limit)
-        .exec(),
+      this.adModel.find(mongoQuery).sort(sort).skip(skip).limit(limit).exec(),
       this.adModel.countDocuments(countQuery),
     ]);
 
@@ -521,7 +886,7 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
   ): Promise<{ ads: Ad[]; total: number }> {
     const skip = (page - 1) * limit;
 
-    const geoQuery: any = { status: 'active' };
+    const geoQuery: Record<string, unknown> = { status: 'active' };
     if (category) geoQuery.category = category;
 
     const countQuery = { ...geoQuery };
@@ -533,29 +898,29 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
           $geometry: { type: 'Point', coordinates: [lng, lat] },
           $maxDistance: maxDistance,
         },
-      } as any;
-      
+      } as unknown;
+
       // $near fails in countDocuments, use $geoWithin $centerSphere instead
-      countQuery.locationCoordinates = {
+      (countQuery as Record<string, unknown>).locationCoordinates = {
         $geoWithin: {
           $centerSphere: [[lng, lat], maxDistance / 6378100],
         },
-      } as any;
+      } as unknown;
     }
 
     const [ads, total] = await Promise.all([
-      this.adModel
-        .find(geoQuery)
-        .skip(skip)
-        .limit(limit)
-        .exec(),
+      this.adModel.find(geoQuery).skip(skip).limit(limit).exec(),
       this.adModel.countDocuments(countQuery),
     ]);
 
     return { ads, total };
   }
 
-  async getAdsByUser(userId: string, page = 1, limit = 10): Promise<{ ads: Ad[]; total: number }> {
+  async getAdsByUser(
+    userId: string,
+    page = 1,
+    limit = 10,
+  ): Promise<{ ads: Ad[]; total: number }> {
     const skip = (page - 1) * limit;
 
     // Show both 'active' AND 'expired' ads — expired ads remain visible to the
@@ -564,7 +929,12 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
     const query = { userId, status: { $in: ['active', 'expired'] } };
 
     const [ads, total] = await Promise.all([
-      this.adModel.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).exec(),
+      this.adModel
+        .find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .exec(),
       this.adModel.countDocuments(query),
     ]);
 
@@ -591,15 +961,21 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
       .exec();
 
     // Extract just the titles and remove duplicates
-    const titles = [...new Set(docs.map(doc => doc.title).filter(Boolean))];
+    const titles = [...new Set(docs.map((doc) => doc.title).filter(Boolean))];
     return titles.slice(0, limit);
   }
 
-  async getRecommendedDeals(userId: string | undefined, limit = 10): Promise<Ad[]> {
+  async getRecommendedDeals(
+    userId: string | undefined,
+    limit = 10,
+  ): Promise<Ad[]> {
     // Simple recommendation: if user provided, try same city from user's profile
     if (userId) {
       try {
-        const user = await this.userModel.findById(String(userId)).lean().exec();
+        const user = await this.userModel
+          .findById(String(userId))
+          .lean()
+          .exec();
         const city = user?.profile?.city;
         if (city) {
           return this.adModel
@@ -609,12 +985,17 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
             .exec();
         }
       } catch (e) {
-        this.logger.warn(`Recommendation lookup failed: ${e.message}`);
+        const message = e instanceof Error ? e.message : String(e);
+        this.logger.warn(`Recommendation lookup failed: ${message}`);
       }
     }
 
     // Fallback: most recent active ads
-    return this.adModel.find({ status: 'active' }).sort({ createdAt: -1 }).limit(limit).exec();
+    return this.adModel
+      .find({ status: 'active' })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .exec();
   }
 
   async getPopularPlaces(limit = 10): Promise<string[]> {
@@ -627,25 +1008,42 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
       { $project: { _id: 1 } },
     ];
 
-    const results = await (this.adModel as any).aggregate(pipeline).exec();
-    return results.map(r => r._id).filter(Boolean);
+    const results = await (
+      this.adModel as unknown as {
+        aggregate: (p: unknown[]) => {
+          exec: () => Promise<Array<Record<string, unknown>>>;
+        };
+      }
+    )
+      .aggregate(pipeline as unknown[])
+      .exec();
+    return results
+      .map((r: Record<string, unknown>) => String(r._id ?? ''))
+      .filter(Boolean);
   }
 
   async incrementViewCount(adId: string): Promise<void> {
     try {
-      let updated = await this.adModel.findOneAndUpdate(
-        { adId },
-        { $inc: { views: 1 }, $set: { updatedAt: new Date() } },
-      ).exec();
+      const updated = await this.adModel
+        .findOneAndUpdate(
+          { adId },
+          { $inc: { views: 1 }, $set: { updatedAt: new Date() } },
+        )
+        .exec();
 
       if (!updated && /^[0-9a-fA-F]{24}$/.test(adId)) {
-        await this.adModel.findByIdAndUpdate(
-          adId,
-          { $inc: { views: 1 }, $set: { updatedAt: new Date() } },
-        ).exec();
+        await this.adModel
+          .findByIdAndUpdate(adId, {
+            $inc: { views: 1 },
+            $set: { updatedAt: new Date() },
+          })
+          .exec();
       }
-    } catch (error: any) {
-      this.logger.error(`Failed to increment view count for ${adId}: ${error.message}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Failed to increment view count for ${adId}: ${message}`,
+      );
     }
   }
 
@@ -660,47 +1058,65 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
   async trackViewWithVisitor(adId: string, userId: string): Promise<void> {
     try {
       if (!userId) {
-        this.logger.warn(`trackViewWithVisitor: No userId provided for ad ${adId}`);
+        this.logger.warn(
+          `trackViewWithVisitor: No userId provided for ad ${adId}`,
+        );
         return;
       }
 
       // Resolve to UUID adId if a MongoDB _id was passed
       let resolvedAdId = adId;
       if (/^[0-9a-fA-F]{24}$/.test(adId)) {
-        const found = await this.adModel.findById(adId).select('adId').lean().exec();
+        const found = await this.adModel
+          .findById(adId)
+          .select('adId')
+          .lean()
+          .exec();
         if (found?.adId) resolvedAdId = found.adId;
       }
 
       // Add userId to viewHistory and sync views = viewHistory.length atomically
-      const updated = await this.adModel.findOneAndUpdate(
-        { adId: resolvedAdId },
-        [
-          {
-            $set: {
-              viewHistory: {
-                $cond: {
-                  if: { $in: [userId, { $ifNull: ['$viewHistory', []] }] },
-                  then: '$viewHistory',
-                  else: { $concatArrays: [{ $ifNull: ['$viewHistory', []] }, [userId]] },
+      const updated = await this.adModel
+        .findOneAndUpdate(
+          { adId: resolvedAdId },
+          [
+            {
+              $set: {
+                viewHistory: {
+                  $cond: {
+                    if: { $in: [userId, { $ifNull: ['$viewHistory', []] }] },
+                    then: '$viewHistory',
+                    else: {
+                      $concatArrays: [
+                        { $ifNull: ['$viewHistory', []] },
+                        [userId],
+                      ],
+                    },
+                  },
                 },
+                updatedAt: new Date(),
               },
-              updatedAt: new Date(),
             },
-          },
-          {
-            $set: {
-              views: { $size: '$viewHistory' },
+            {
+              $set: {
+                views: { $size: '$viewHistory' },
+              },
             },
-          },
-        ],
-        { new: true },
-      ).exec();
+          ],
+          { new: true },
+        )
+        .exec();
 
       if (!updated) {
-        this.logger.warn(`trackViewWithVisitor: ad not found for adId=${resolvedAdId}`);
+        this.logger.warn(
+          `trackViewWithVisitor: ad not found for adId=${resolvedAdId}`,
+        );
       }
-    } catch (error: any) {
-      this.logger.error(`Failed to track view for user ${userId} on ad ${adId}: ${error.message}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Failed to track view for user ${userId} on ad ${adId}: ${message}`,
+      );
     }
   }
 
@@ -709,19 +1125,26 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
    */
   async trackContactClick(adId: string): Promise<void> {
     try {
-      let updated = await this.adModel.findOneAndUpdate(
-        { adId },
-        { $inc: { contactClicks: 1 }, $set: { updatedAt: new Date() } },
-      ).exec();
+      const updated = await this.adModel
+        .findOneAndUpdate(
+          { adId },
+          { $inc: { contactClicks: 1 }, $set: { updatedAt: new Date() } },
+        )
+        .exec();
 
       if (!updated && /^[0-9a-fA-F]{24}$/.test(adId)) {
-        await this.adModel.findByIdAndUpdate(
-          adId,
-          { $inc: { contactClicks: 1 }, $set: { updatedAt: new Date() } },
-        ).exec();
+        await this.adModel
+          .findByIdAndUpdate(adId, {
+            $inc: { contactClicks: 1 },
+            $set: { updatedAt: new Date() },
+          })
+          .exec();
       }
-    } catch (error: any) {
-      this.logger.error(`Failed to track contact click for ${adId}: ${error.message}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Failed to track contact click for ${adId}: ${message}`,
+      );
     }
   }
 
@@ -738,7 +1161,7 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
       promotedAds: number;
       totalWishlistSaves: number;
     };
-    ads: any[];
+    ads: Array<Record<string, unknown>>;
   }> {
     const owner = await this.userModel
       .findById(userId)
@@ -748,37 +1171,55 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
 
     const ads = await this.adModel
       .find({ userId })
-      .select('adId title description category subCategory status views viewHistory contactClicks isPromoted promotedUntil createdAt updatedAt price images videos city state pincode location locationCoordinates contactInfo primaryContact cities language selectedDates templateId tags expiryDate metadata categorySpecificData reportCount isUnderReview autoDisabled disabledAt disabledReason negotiable')
+      .select(
+        'adId title description category subCategory status views viewHistory contactClicks isPromoted promotedUntil createdAt updatedAt price images videos city state pincode location locationCoordinates contactInfo primaryContact cities language selectedDates templateId tags expiryDate metadata categorySpecificData reportCount isUnderReview autoDisabled disabledAt disabledReason negotiable',
+      )
       .sort({ createdAt: -1 })
       .lean()
       .exec();
 
-    const adIds = ads.map(a => a.adId).filter(Boolean);
+    const adIds = ads.map((a) => a.adId).filter(Boolean);
 
     // Count how many users have each ad in their wishlist
     const wishlistCounts: Record<string, number> = {};
     if (adIds.length > 0) {
-      const wishlistAgg = await this.userModel.aggregate([
-        { $match: { wishlist: { $in: adIds } } },
-        { $unwind: '$wishlist' },
-        { $match: { wishlist: { $in: adIds } } },
-        { $group: { _id: '$wishlist', count: { $sum: 1 } } },
-      ]).exec();
+      const wishlistAgg = await this.userModel
+        .aggregate([
+          { $match: { wishlist: { $in: adIds } } },
+          { $unwind: '$wishlist' },
+          { $match: { wishlist: { $in: adIds } } },
+          { $group: { _id: '$wishlist', count: { $sum: 1 } } },
+        ])
+        .exec();
       for (const item of wishlistAgg) {
         wishlistCounts[item._id] = item.count;
       }
     }
 
     const totalAds = ads.length;
-    const activeAds = ads.filter(a => a.status === 'active').length;
-    const promotedAds = ads.filter(a => a.isPromoted && a.promotedUntil && new Date(a.promotedUntil) > new Date()).length;
+    const activeAds = ads.filter((a) => a.status === 'active').length;
+    const promotedAds = ads.filter(
+      (a) =>
+        a.isPromoted &&
+        a.promotedUntil &&
+        new Date(a.promotedUntil) > new Date(),
+    ).length;
     // views = unique visitors only (viewHistory.length is the source of truth)
-    const totalViews = ads.reduce((sum, a) => sum + (a.viewHistory?.length || 0), 0);
+    const totalViews = ads.reduce(
+      (sum, a) => sum + (a.viewHistory?.length || 0),
+      0,
+    );
     const uniqueVisitors = totalViews; // same — views IS unique visitors
-    const totalContactClicks = ads.reduce((sum, a) => sum + (a.contactClicks || 0), 0);
-    const totalWishlistSaves = Object.values(wishlistCounts).reduce((sum, c) => sum + c, 0);
+    const totalContactClicks = ads.reduce(
+      (sum, a) => sum + (a.contactClicks || 0),
+      0,
+    );
+    const totalWishlistSaves = Object.values(wishlistCounts).reduce(
+      (sum, c) => sum + c,
+      0,
+    );
 
-    const adsWithAnalytics = ads.map(ad => ({
+    const adsWithAnalytics = ads.map((ad) => ({
       adId: ad.adId,
       title: ad.title,
       description: ad.description,
@@ -797,13 +1238,30 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
       imageCount: ad.images?.length || 0,
       videoCount: ad.videos?.length || 0,
       templateId: ad.templateId || 1,
-      views: ad.viewHistory?.length || 0,          // unique visitors = views
+      views: ad.viewHistory?.length || 0, // unique visitors = views
       uniqueVisitors: ad.viewHistory?.length || 0, // kept for compatibility
       viewerIds: ad.viewHistory || [],
       contactClicks: ad.contactClicks || 0,
       wishlistCount: wishlistCounts[ad.adId] || 0,
-      clickThroughRate: (ad.viewHistory?.length || 0) > 0 ? Number((((ad.contactClicks || 0) / (ad.viewHistory?.length || 0)) * 100).toFixed(2)) : 0,
-      wishlistRate: (ad.viewHistory?.length || 0) > 0 ? Number((((wishlistCounts[ad.adId] || 0) / (ad.viewHistory?.length || 0)) * 100).toFixed(2)) : 0,
+      clickThroughRate:
+        (ad.viewHistory?.length || 0) > 0
+          ? Number(
+              (
+                ((ad.contactClicks || 0) / (ad.viewHistory?.length || 0)) *
+                100
+              ).toFixed(2),
+            )
+          : 0,
+      wishlistRate:
+        (ad.viewHistory?.length || 0) > 0
+          ? Number(
+              (
+                ((wishlistCounts[ad.adId] || 0) /
+                  (ad.viewHistory?.length || 0)) *
+                100
+              ).toFixed(2),
+            )
+          : 0,
       isPromoted: ad.isPromoted || false,
       promotedUntil: ad.promotedUntil || null,
       expiryDate: ad.expiryDate || null,
@@ -830,7 +1288,15 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
     }));
 
     return {
-      summary: { totalAds, activeAds, totalViews, uniqueVisitors, totalContactClicks, promotedAds, totalWishlistSaves },
+      summary: {
+        totalAds,
+        activeAds,
+        totalViews,
+        uniqueVisitors,
+        totalContactClicks,
+        promotedAds,
+        totalWishlistSaves,
+      },
       ads: adsWithAnalytics,
     };
   }
@@ -866,8 +1332,9 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
         .countDocuments({ wishlist: resolvedAdId })
         .exec();
       return count;
-    } catch (error: any) {
-      this.logger.error(`Failed to get wishlist count for ${adId}: ${error.message}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to get wishlist count for ${adId}: ${message}`);
       return 0;
     }
   }
@@ -881,13 +1348,16 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
    * Fixes all existing ads that have inflated view counts from non-unique tracking.
    */
   async resyncViewCounts(): Promise<{ updated: number }> {
-    const result = await (this.adModel as any).updateMany(
-      {},
-      [
+    const result = await this.adModel
+      .updateMany({}, [
         { $set: { views: { $size: { $ifNull: ['$viewHistory', []] } } } },
-      ],
-    ).exec();
-    return { updated: result.modifiedCount ?? result.nModified ?? 0 };
+      ])
+      .exec();
+    const modifiedCount =
+      result.modifiedCount ??
+      (result as unknown as { nModified?: number }).nModified ??
+      0;
+    return { updated: modifiedCount };
   }
 
   async updateAd(
@@ -898,21 +1368,38 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
     const ad = await this.getAdById(adId);
 
     if (ad.userId !== userId) {
-      throw new ForbiddenException(
-        'You can only update your own ads',
-      );
+      throw new ForbiddenException('You can only update your own ads');
+    }
+
+    const currentEditCount =
+      typeof (ad as unknown as Record<string, unknown>).editCount === 'number'
+        ? ((ad as unknown as Record<string, unknown>).editCount as number)
+        : 0;
+    const hasUsedEdit =
+      Boolean((ad as unknown as Record<string, unknown>).hasUsedEdit) ||
+      currentEditCount >= 1;
+
+    if (hasUsedEdit) {
+      throw new ForbiddenException('You can edit an ad only once');
     }
 
     const updatedAd = await this.adModel
       .findOneAndUpdate(
         { adId },
-        { $set: { ...updateData, updatedAt: new Date() } },
+        {
+          $set: {
+            ...updateData,
+            updatedAt: new Date(),
+            hasUsedEdit: true,
+            editedAt: new Date(),
+          },
+          $inc: { editCount: 1 },
+        },
         { new: true },
       )
       .exec();
 
-    if (!updatedAd)
-      throw new NotFoundException(`Ad ${adId} not found`);
+    if (!updatedAd) throw new NotFoundException(`Ad ${adId} not found`);
 
     await this.emitAdUpdated(updatedAd, uuidv4());
 
@@ -923,16 +1410,11 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
     const ad = await this.getAdById(adId);
 
     if (ad.userId !== userId) {
-      throw new ForbiddenException(
-        'You can only delete your own ads',
-      );
+      throw new ForbiddenException('You can only delete your own ads');
     }
 
     await this.adModel
-      .findOneAndUpdate(
-        { adId },
-        { status: 'deleted', updatedAt: new Date() },
-      )
+      .findOneAndUpdate({ adId }, { status: 'deleted', updatedAt: new Date() })
       .exec();
 
     await this.emitAdDeleted(adId, userId, uuidv4());
@@ -1008,77 +1490,154 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
     description?: string,
   ): Promise<{ success: boolean; message: string; reportId: string }> {
     try {
-      this.logger.log(`User ${userId} reporting ad ${adId} for reason: ${reason}`);
+      this.logger.log(
+        `User ${userId} reporting ad ${adId} for reason: ${reason}`,
+      );
 
-      // Resolve adId - could be UUID or MongoDB _id
-      let resolvedAdId = adId;
-      if (/^[0-9a-fA-F]{24}$/.test(adId)) {
-        // If it looks like MongoDB _id, get the UUID adId
-        const found = await this.adModel.findById(adId).select('adId').lean().exec();
-        if (found?.adId) {
-          resolvedAdId = found.adId;
-        }
-      }
+      const resolvedAdId = await this.resolveAdId(adId);
 
-      // Check if ad exists
-      const ad = await this.adModel.findOne({ adId: resolvedAdId }).exec();
-      if (!ad) {
-        throw new NotFoundException('Ad not found');
-      }
+      await this.validateReportSubmission(resolvedAdId, userId);
 
-      // Prevent owner from reporting their own ad
-      if (ad.userId === userId) {
-        throw new ForbiddenException('You cannot report your own ad');
-      }
-
-      // Check if user already reported this ad
-      const existingReport = await this.reportModel
-        .findOne({ adId: resolvedAdId, reportedBy: userId })
-        .exec();
-      
-      if (existingReport) {
-        throw new BadRequestException('You have already reported this ad');
-      }
-
-      // Create report
-      const report = await this.reportModel.create({
-        reportId: uuidv4(),
-        adId: resolvedAdId,
-        reportedBy: userId,
+      const report = await this.createReport(
+        resolvedAdId,
+        userId,
         reason,
-        description: description || '',
-        status: ReportStatus.PENDING,
-      });
+        description,
+      );
 
-      // Increment report count on ad
-      const updatedAd = await this.adModel.findOneAndUpdate(
+      const updatedAd = await this.incrementReportCount(resolvedAdId);
+
+      await this.handleReportThreshold(resolvedAdId, updatedAd);
+
+      await this.emitReportEvents(
+        resolvedAdId,
+        userId,
+        reason,
+        report,
+        updatedAd,
+      );
+
+      await this.sendAdminNotification(
+        resolvedAdId,
+        userId,
+        reason,
+        description,
+        updatedAd,
+      );
+
+      return {
+        success: true,
+        message: 'Report submitted successfully',
+        reportId: report.reportId,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error submitting report: ${message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Resolve adId from potential MongoDB _id to UUID
+   */
+  private async resolveAdId(adId: string): Promise<string> {
+    if (!/^[0-9a-fA-F]{24}$/.test(adId)) {
+      return adId;
+    }
+    const found = await this.adModel
+      .findById(adId)
+      .select('adId')
+      .lean()
+      .exec();
+    return found?.adId ?? adId;
+  }
+
+  /**
+   * Validate report submission - checks ad exists, ownership, and duplicates
+   */
+  private async validateReportSubmission(
+    resolvedAdId: string,
+    userId: string,
+  ): Promise<void> {
+    const ad = await this.adModel.findOne({ adId: resolvedAdId }).exec();
+    if (!ad) {
+      throw new NotFoundException('Ad not found');
+    }
+    if (ad.userId === userId) {
+      throw new ForbiddenException('You cannot report your own ad');
+    }
+    const existingReport = await this.reportModel
+      .findOne({ adId: resolvedAdId, reportedBy: userId })
+      .exec();
+    if (existingReport) {
+      throw new BadRequestException('You have already reported this ad');
+    }
+  }
+
+  /**
+   * Create a new report
+   */
+  private async createReport(
+    resolvedAdId: string,
+    userId: string,
+    reason: ReportReason,
+    description?: string,
+  ): Promise<ReportDocument> {
+    return this.reportModel.create({
+      reportId: uuidv4(),
+      adId: resolvedAdId,
+      reportedBy: userId,
+      reason,
+      description: description || '',
+      status: ReportStatus.PENDING,
+    });
+  }
+
+  /**
+   * Increment report count on ad
+   */
+  private async incrementReportCount(
+    resolvedAdId: string,
+  ): Promise<AdDocument | null> {
+    return this.adModel
+      .findOneAndUpdate(
         { adId: resolvedAdId },
         {
           $inc: { reportCount: 1 },
           $set: { isUnderReview: true },
         },
         { new: true },
-      ).exec();
+      )
+      .exec();
+  }
 
-      // Auto-disable if 10 or more reports
-      if ((updatedAd?.reportCount ?? 0) >= 10) {
-        await this.autoDisableAd(resolvedAdId, `Auto-disabled: ${updatedAd?.reportCount} reports`);
-      }
+  /**
+   * Handle report threshold - auto-disable if needed
+   */
+  private async handleReportThreshold(
+    resolvedAdId: string,
+    updatedAd: AdDocument | null,
+  ): Promise<void> {
+    if ((updatedAd?.reportCount ?? 0) >= 10) {
+      await this.autoDisableAd(
+        resolvedAdId,
+        `Auto-disabled: ${updatedAd?.reportCount} reports`,
+      );
+    }
+  }
 
-      // Emit Kafka event for notifications
-      if (this.kafkaService) {
-        await this.kafkaService.emit(KAFKA_TOPICS.AD_REPORT_SUBMITTED, {
-          reportId: report.reportId,
-          adId: resolvedAdId,
-          reportedBy: userId,
-          reason,
-          reportCount: updatedAd?.reportCount,
-          timestamp: new Date().toISOString(),
-        });
-      }
-
-      // Emit event for WebSocket notification
-      this.eventEmitter.emit('report.submitted', {
+  /**
+   * Emit report events (Kafka and WebSocket)
+   */
+  private async emitReportEvents(
+    resolvedAdId: string,
+    userId: string,
+    reason: ReportReason,
+    report: ReportDocument,
+    updatedAd: AdDocument | null,
+  ): Promise<void> {
+    if (this.kafkaService) {
+      await this.kafkaService.emit(KAFKA_TOPICS.AD_REPORT_SUBMITTED, {
         reportId: report.reportId,
         adId: resolvedAdId,
         reportedBy: userId,
@@ -1086,45 +1645,63 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
         reportCount: updatedAd?.reportCount,
         timestamp: new Date().toISOString(),
       });
+    }
+    this.eventEmitter.emit('report.submitted', {
+      reportId: report.reportId,
+      adId: resolvedAdId,
+      reportedBy: userId,
+      reason,
+      reportCount: updatedAd?.reportCount,
+      timestamp: new Date().toISOString(),
+    });
+  }
 
-      // Send email notification to admin
-      if (this.emailEnabled && this.emailTransporter) {
-        try {
-          const adData = await this.adModel.findOne({ adId: resolvedAdId }).select('title').lean().exec();
-          const adminEmail = this.configService.get('ADMIN_EMAIL');
-          
-          if (adminEmail) {
-            const mailOptions = {
-              from: this.configService.get('EMAIL_FROM'),
-              to: adminEmail,
-              subject: `🚨 Ad Reported: ${reason.toUpperCase()} (${updatedAd?.reportCount || 1} reports)`,
-              html: this.generateReportEmailHTML({
-                adId: resolvedAdId,
-                adTitle: adData?.title || 'Unknown',
-                reason,
-                description: description || '',
-                reportedBy: userId,
-                reportCount: updatedAd?.reportCount || 1,
-              }),
-            };
-
-            await this.emailTransporter.sendMail(mailOptions);
-            this.logger.log(`✅ Email sent to admin: ${adminEmail}`);
-          }
-        } catch (emailError: any) {
-          this.logger.error(`Failed to send report email: ${emailError.message}`);
-          // Don't throw - email failure shouldn't break report submission
-        }
+  /**
+   * Send admin notification email
+   */
+  private async sendAdminNotification(
+    resolvedAdId: string,
+    userId: string,
+    reason: ReportReason,
+    description: string | undefined,
+    updatedAd: AdDocument | null,
+  ): Promise<void> {
+    if (!this.emailEnabled || !this.emailTransporter) {
+      return;
+    }
+    try {
+      const adData = await this.adModel
+        .findOne({ adId: resolvedAdId })
+        .select('title')
+        .lean()
+        .exec();
+      const adminEmail = this.configService.get('ADMIN_EMAIL');
+      if (!adminEmail) {
+        return;
       }
-
-      return {
-        success: true,
-        message: 'Report submitted successfully',
-        reportId: report.reportId,
+      const mailOptions = {
+        from: this.configService.get('EMAIL_FROM'),
+        to: adminEmail,
+        subject: `🚨 Ad Reported: ${reason.toUpperCase()} (${updatedAd?.reportCount || 1} reports)`,
+        html: this.generateReportEmailHTML({
+          adId: resolvedAdId,
+          adTitle: adData?.title || 'Unknown',
+          reason,
+          description: description || '',
+          reportedBy: userId,
+          reportCount: updatedAd?.reportCount || 1,
+        }),
       };
-    } catch (error: any) {
-      this.logger.error(`Error submitting report: ${error.message}`);
-      throw error;
+      await (
+        this.emailTransporter as {
+          sendMail: (opts: unknown) => Promise<unknown>;
+        }
+      ).sendMail(mailOptions);
+      this.logger.log(`✅ Email sent to admin: ${adminEmail}`);
+    } catch (emailError) {
+      const message =
+        emailError instanceof Error ? emailError.message : String(emailError);
+      this.logger.error(`Failed to send report email: ${message}`);
     }
   }
 
@@ -1135,21 +1712,26 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
     try {
       this.logger.warn(`Auto-disabling ad ${adId}: ${reason}`);
 
-      await this.adModel.findOneAndUpdate(
-        { adId },
-        {
-          $set: {
-            autoDisabled: true,
-            disabledAt: new Date(),
-            disabledReason: reason,
-            status: 'expired', // Mark as expired so it won't show in listings
+      await this.adModel
+        .findOneAndUpdate(
+          { adId },
+          {
+            $set: {
+              autoDisabled: true,
+              disabledAt: new Date(),
+              disabledReason: reason,
+              status: 'expired', // Mark as expired so it won't show in listings
+            },
           },
-        },
-      ).exec();
+        )
+        .exec();
 
       // Get ad owner to notify
-      const ad = await this.adModel.findOne({ adId }).select('userId title').exec();
-      
+      const ad = await this.adModel
+        .findOne({ adId })
+        .select('userId title')
+        .exec();
+
       if (ad && this.kafkaService) {
         await this.kafkaService.emit(KAFKA_TOPICS.AD_AUTO_DISABLED, {
           adId,
@@ -1159,27 +1741,148 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
           timestamp: new Date().toISOString(),
         });
       }
-    } catch (error: any) {
-      this.logger.error(`Error auto-disabling ad: ${error.message}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error auto-disabling ad: ${message}`);
     }
   }
 
   /**
    * Get all reports for a specific ad (admin only)
    */
-  async getAdReports(adId: string): Promise<any[]> {
+  async getAdReports(adId: string): Promise<Array<Record<string, unknown>>> {
     try {
-      this.logger.log(`Fetching reports for ad: ${adId}`);
+      this.logger.log(`Fetching enriched reports for ad: ${adId}`);
 
-      const reports = await this.reportModel
-        .find({ adId })
-        .sort({ createdAt: -1 })
-        .lean()
-        .exec();
+      const reports = await this.reportModel.aggregate([
+        { $match: { adId } },
+        {
+          $lookup: {
+            from: 'ads',
+            localField: 'adId',
+            foreignField: 'adId',
+            as: 'ad',
+          },
+        },
+        { $unwind: { path: '$ad', preserveNullAndEmptyArrays: true } },
+        // Convert ad.userId (string) to ObjectId for user lookup
+        {
+          $addFields: {
+            adUserObjectId: {
+              $cond: [
+                {
+                  $regexMatch: {
+                    input: '$ad.userId',
+                    regex: /^[0-9a-fA-F]{24}$/,
+                  },
+                },
+                { $toObjectId: '$ad.userId' },
+                null,
+              ],
+            },
+            adUserIdString: '$ad.userId',
+          },
+        },
+        // Lookup uploader (user or merchant) by _id
+        {
+          $lookup: {
+            from: 'users',
+            let: { adUserObjectId: '$adUserObjectId' },
+            pipeline: [
+              { $match: { $expr: { $eq: ['$_id', '$$adUserObjectId'] } } },
+            ],
+            as: 'uploader',
+          },
+        },
+        { $unwind: { path: '$uploader', preserveNullAndEmptyArrays: true } },
+        // Lookup all active ads for this uploader to count listings
+        {
+          $lookup: {
+            from: 'ads',
+            let: { uploaderUserId: '$uploader._id' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $and: [
+                      { $eq: [{ $toObjectId: '$userId' }, '$$uploaderUserId'] },
+                      { $eq: ['$status', 'active'] },
+                    ],
+                  },
+                },
+              },
+            ],
+            as: 'uploaderActiveAds',
+          },
+        },
+        {
+          $addFields: {
+            uploader: {
+              $cond: [
+                { $ifNull: ['$uploader.userId', false] },
+                '$uploader',
+                {
+                  $cond: [
+                    { $ifNull: ['$adUserIdString', false] },
+                    {
+                      name: 'No user info',
+                      accountType: '-',
+                      role: '-',
+                      email: '-',
+                      userId: '$adUserIdString',
+                    },
+                    {
+                      name: 'No user info',
+                      accountType: '-',
+                      role: '-',
+                      email: '-',
+                      userId: '-',
+                    },
+                  ],
+                },
+              ],
+            },
+            uploaderListingCount: {
+              $size: { $ifNull: ['$uploaderActiveAds', []] },
+            },
+          },
+        },
+        {
+          $project: {
+            reportId: 1,
+            adId: 1,
+            reportedBy: 1,
+            reason: 1,
+            description: 1,
+            status: 1,
+            adminNotes: 1,
+            createdAt: 1,
+            reviewedAt: 1,
+            // Ad details
+            'ad.title': 1,
+            'ad.price': 1,
+            'ad.category': 1,
+            'ad.subCategory': 1,
+            'ad.images': 1,
+            'ad.status': 1,
+            'ad.reportCount': 1,
+            'ad.userId': 1,
+            // Uploader details
+            'uploader.name': 1,
+            'uploader.accountType': 1,
+            'uploader.role': 1,
+            'uploader.email': 1,
+            'uploader.userId': 1,
+            uploaderListingCount: 1,
+          },
+        },
+        { $sort: { createdAt: -1 } },
+      ]);
 
       return reports;
-    } catch (error: any) {
-      this.logger.error(`Error fetching reports: ${error.message}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error fetching enriched reports: ${message}`);
       throw error;
     }
   }
@@ -1187,7 +1890,7 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
   /**
    * Get all reports queue (admin only) - shows all reports regardless of status
    */
-  async getAllReports(): Promise<any[]> {
+  async getAllReports(): Promise<Array<Record<string, unknown>>> {
     try {
       this.logger.log('🔍 Fetching all reports queue from database');
 
@@ -1201,9 +1904,7 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
       }
 
       const reports = await this.reportModel.aggregate([
-        {
-          $match: {}, // Match ALL reports (no status filter)
-        },
+        { $match: {} },
         {
           $lookup: {
             from: 'ads',
@@ -1212,12 +1913,8 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
             as: 'ad',
           },
         },
-        {
-          $unwind: {
-            path: '$ad',
-            preserveNullAndEmptyArrays: true, // Keep reports even if ad is deleted
-          },
-        },
+        { $unwind: { path: '$ad', preserveNullAndEmptyArrays: false } }, // Only keep if ad exists
+        { $match: { 'ad.status': { $nin: ['deleted', 'hidden'] } } }, // Exclude deleted/hidden ads
         {
           $project: {
             reportId: 1,
@@ -1234,15 +1931,16 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
             'ad.reportCount': 1,
           },
         },
-        {
-          $sort: { createdAt: -1 },
-        },
+        { $sort: { createdAt: -1 } },
       ]);
 
-      this.logger.log(`✅ Successfully fetched ${reports.length} reports with ad details`);
+      this.logger.log(
+        `✅ Successfully fetched ${reports.length} reports with ad details (excluding deleted/hidden/missing ads)`,
+      );
       return reports;
-    } catch (error: any) {
-      this.logger.error(`❌ Error fetching reports: ${error.message}`, error.stack);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`❌ Error fetching reports: ${message}`);
       throw error;
     }
   }
@@ -1260,18 +1958,20 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
     try {
       this.logger.log(`Updating report ${reportId} status to: ${status}`);
 
-      const report = await this.reportModel.findOneAndUpdate(
-        { reportId },
-        {
-          $set: {
-            status,
-            adminNotes: adminNotes || '',
-            reviewedAt: new Date(),
-            reviewedBy: reviewerId || '',
+      const report = await this.reportModel
+        .findOneAndUpdate(
+          { reportId },
+          {
+            $set: {
+              status,
+              adminNotes: adminNotes || '',
+              reviewedAt: new Date(),
+              reviewedBy: reviewerId || '',
+            },
           },
-        },
-        { new: true },
-      ).exec();
+          { new: true },
+        )
+        .exec();
 
       if (!report) {
         throw new NotFoundException('Report not found');
@@ -1284,7 +1984,7 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
           adminEmail: reviewerEmail,
           targetId: reportId,
           targetType: 'Report',
-          details: { newStatus: status, adminNotes }
+          details: { newStatus: status, adminNotes },
         });
       }
 
@@ -1292,8 +1992,9 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
         success: true,
         message: 'Report status updated successfully',
       };
-    } catch (error: any) {
-      this.logger.error(`Error updating report status: ${error.message}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error updating report status: ${message}`);
       throw error;
     }
   }
@@ -1312,7 +2013,7 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
       this.logger.log(`Admin reviewing ad ${adId}, decision: ${decision}`);
 
       // Update ad based on decision
-      const updateData: any = {
+      const updateData: Record<string, unknown> = {
         isUnderReview: false,
         reviewedBy: reviewerId || '',
         reviewedAt: new Date(),
@@ -1324,25 +2025,30 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
         updateData.disabledReason = '';
       } else if (decision === 'remove') {
         updateData.status = 'deleted';
-        updateData.rejectionReason = adminNotes || 'Removed by admin after review';
+        updateData.rejectionReason =
+          adminNotes || 'Removed by admin after review';
       } else if (decision === 'request_changes') {
         updateData.status = 'pending';
         updateData.rejectionReason = adminNotes || 'Changes requested by admin';
       }
 
-      await this.adModel.findOneAndUpdate({ adId }, { $set: updateData }).exec();
+      await this.adModel
+        .findOneAndUpdate({ adId }, { $set: updateData })
+        .exec();
 
       // Mark all pending reports for this ad as action_taken
-      await this.reportModel.updateMany(
-        { adId, status: ReportStatus.PENDING },
-        {
-          $set: {
-            status: ReportStatus.ACTION_TAKEN,
-            reviewedAt: new Date(),
-            reviewedBy: reviewerId || '',
+      await this.reportModel
+        .updateMany(
+          { adId, status: ReportStatus.PENDING },
+          {
+            $set: {
+              status: ReportStatus.ACTION_TAKEN,
+              reviewedAt: new Date(),
+              reviewedBy: reviewerId || '',
+            },
           },
-        },
-      ).exec();
+        )
+        .exec();
 
       if (reviewerId && reviewerEmail) {
         await this.auditLogsService.log({
@@ -1351,7 +2057,7 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
           adminEmail: reviewerEmail,
           targetId: adId,
           targetType: 'Ad',
-          details: { decision, adminNotes }
+          details: { decision, adminNotes },
         });
       }
 
@@ -1359,8 +2065,9 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
         success: true,
         message: `Ad ${decision === 'approve' ? 'approved' : decision.replace('_', ' ')} successfully`,
       };
-    } catch (error: any) {
-      this.logger.error(`Error reviewing ad: ${error.message}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error reviewing ad: ${message}`);
       throw error;
     }
   }
@@ -1383,16 +2090,16 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
 
       let updated = 0;
       for (const item of result) {
-        await this.adModel.updateOne(
-          { adId: item._id },
-          { $set: { reportCount: item.count } },
-        ).exec();
+        await this.adModel
+          .updateOne({ adId: item._id }, { $set: { reportCount: item.count } })
+          .exec();
         updated++;
       }
 
       return { updated };
-    } catch (error: any) {
-      this.logger.error(`Error resyncing report counts: ${error.message}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error resyncing report counts: ${message}`);
       throw error;
     }
   }
@@ -1408,8 +2115,18 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
     reportedBy: string;
     reportCount: number;
   }): string {
-    const urgencyColor = data.reportCount >= 10 ? '#dc2626' : data.reportCount >= 5 ? '#ea580c' : '#ca8a04';
-    const urgencyText = data.reportCount >= 10 ? 'CRITICAL - Auto-Disabled' : data.reportCount >= 5 ? 'High Priority' : 'New Report';
+    const urgencyColor =
+      data.reportCount >= 10
+        ? '#dc2626'
+        : data.reportCount >= 5
+          ? '#ea580c'
+          : '#ca8a04';
+    const urgencyText =
+      data.reportCount >= 10
+        ? 'CRITICAL - Auto-Disabled'
+        : data.reportCount >= 5
+          ? 'High Priority'
+          : 'New Report';
 
     const emojis: Record<string, string> = {
       spam: '📢',
@@ -1447,7 +2164,7 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
             <div class="content">
               <div style="text-align: center;">
                 <span class="urgency-badge" style="background: ${urgencyColor};">${urgencyText}</span>
-                <div class="report-count">${data.reportCount} Report${data.reportCount !== 1 ? 's' : ''}</div>
+                <div class="report-count">${data.reportCount} Report${data.reportCount === 1 ? '' : 's'}</div>
               </div>
 
               <div class="detail-row">
@@ -1464,12 +2181,16 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
                 </div>
               </div>
 
-              ${data.description ? `
+              ${
+                data.description
+                  ? `
                 <div class="detail-row">
                   <div class="label">Reporter's Description</div>
                   <div class="value" style="font-style: italic;">"${data.description}"</div>
                 </div>
-              ` : ''}
+              `
+                  : ''
+              }
 
               <div class="detail-row">
                 <div class="label">Reported By (User ID)</div>
@@ -1482,14 +2203,18 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
                 </a>
               </div>
 
-              ${data.reportCount >= 10 ? `
+              ${
+                data.reportCount >= 10
+                  ? `
                 <div style="margin-top: 20px; padding: 15px; background: #fef2f2; border: 2px solid #dc2626; border-radius: 8px;">
                   <strong style="color: #dc2626;">⚠️ AUTO-DISABLED</strong>
                   <p style="margin: 10px 0 0 0; color: #991b1b; font-size: 14px;">
                     This ad has been automatically disabled due to reaching 10 reports. Please review immediately.
                   </p>
                 </div>
-              ` : ''}
+              `
+                  : ''
+              }
 
               <div class="footer">
                 <p>This is an automated notification from GOLO's content moderation system.</p>
@@ -1513,11 +2238,140 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
     return this.adModel.countDocuments();
   }
 
+  async getTotalReportsCount(): Promise<number> {
+    return this.reportModel.countDocuments();
+  }
+
+  async getCategoryManagementPublic(limit = 12): Promise<{
+    summary: {
+      totalCategories: number;
+      activeCategories: number;
+      subcategories: number;
+      disabledHidden: number;
+    };
+    tree: Array<{ label: string; products: string[] }>;
+    rows: Array<{
+      name: string;
+      parent: string;
+      listings: number;
+      status: 'Active' | 'Hidden';
+      lastUpdated: string;
+    }>;
+    totalRows: number;
+    updatedAt: string;
+  }> {
+    const safeLimit = Math.max(1, Math.min(100, Number(limit) || 12));
+
+    const [
+      categoryValues,
+      activeCategoryValues,
+      subcategoryValues,
+      treeAgg,
+      listAgg,
+      totalRowsAgg,
+    ] = await Promise.all([
+      this.adModel.distinct('category').exec(),
+      this.adModel.distinct('category', { status: 'active' }).exec(),
+      this.adModel.distinct('subCategory').exec(),
+      this.adModel
+        .aggregate([
+          {
+            $group: {
+              _id: '$category',
+              listings: { $sum: 1 },
+              products: { $addToSet: '$subCategory' },
+            },
+          },
+          { $sort: { listings: -1 } },
+          { $limit: 6 },
+          {
+            $project: {
+              _id: 0,
+              label: '$_id',
+              products: { $slice: ['$products', 8] },
+            },
+          },
+        ])
+        .exec(),
+      this.adModel
+        .aggregate([
+          {
+            $group: {
+              _id: {
+                category: '$category',
+                subCategory: '$subCategory',
+              },
+              listings: { $sum: 1 },
+              activeListings: {
+                $sum: {
+                  $cond: [{ $eq: ['$status', 'active'] }, 1, 0],
+                },
+              },
+              lastUpdated: { $max: '$updatedAt' },
+            },
+          },
+          { $sort: { listings: -1 } },
+          { $limit: safeLimit },
+          {
+            $project: {
+              _id: 0,
+              name: '$_id.subCategory',
+              parent: '$_id.category',
+              listings: 1,
+              status: {
+                $cond: [{ $gt: ['$activeListings', 0] }, 'Active', 'Hidden'],
+              },
+              lastUpdated: {
+                $ifNull: ['$lastUpdated', new Date()],
+              },
+            },
+          },
+        ])
+        .exec(),
+      this.adModel
+        .aggregate([
+          {
+            $group: {
+              _id: {
+                category: '$category',
+                subCategory: '$subCategory',
+              },
+            },
+          },
+          { $count: 'total' },
+        ])
+        .exec(),
+    ]);
+
+    const totalCategories = (categoryValues || []).filter(Boolean).length;
+    const activeCategories = (activeCategoryValues || []).filter(
+      Boolean,
+    ).length;
+    const subcategories = (subcategoryValues || []).filter(Boolean).length;
+    const disabledHidden = Math.max(totalCategories - activeCategories, 0);
+
+    return {
+      summary: {
+        totalCategories,
+        activeCategories,
+        subcategories,
+        disabledHidden,
+      },
+      tree: Array.isArray(treeAgg) ? treeAgg : [],
+      rows: Array.isArray(listAgg) ? listAgg : [],
+      totalRows: totalRowsAgg?.[0]?.total || 0,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
   /* ============================================================
      VALIDATION
-  ============================================================ */
+   ============================================================ */
 
-  private validateCategoryData(category: string, data: any): void {
+  private validateCategoryData(
+    category: string,
+    data: Record<string, unknown>,
+  ): void {
     if (!data) return;
   }
 }

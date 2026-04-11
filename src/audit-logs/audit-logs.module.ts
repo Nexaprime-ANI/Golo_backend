@@ -1,15 +1,20 @@
-import { Module, Global } from '@nestjs/common';
+import { Global, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { AuditLog, AuditLogSchema } from './schemas/audit-log.schema';
-import { AuditLogsService } from './audit-logs.service';
+import { KafkaModule } from '../kafka/kafka.module';
 import { AuditLogsController } from './audit-logs.controller';
+import { AuditLogsKafkaController } from './audit-logs.kafka.controller';
+import { AuditLogsService } from './audit-logs.service';
+import { AuditLog, AuditLogSchema } from './schemas/audit-log.schema';
 
 @Global()
 @Module({
   imports: [
-    MongooseModule.forFeature([{ name: AuditLog.name, schema: AuditLogSchema }]),
+    MongooseModule.forFeature([
+      { name: AuditLog.name, schema: AuditLogSchema },
+    ]),
+    KafkaModule,
   ],
-  controllers: [AuditLogsController],
+  controllers: [AuditLogsController, AuditLogsKafkaController],
   providers: [AuditLogsService],
   exports: [AuditLogsService],
 })

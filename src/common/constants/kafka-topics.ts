@@ -8,7 +8,7 @@ export const KAFKA_TOPICS = {
   AD_GET_BY_USER: 'ad.get.by.user',
   AD_SEARCH: 'ad.search',
   AD_GET_NEARBY: 'ad.get.nearby',
-  
+
   // Ad Events (Responses/Notifications)
   AD_CREATED: 'ad.created',
   AD_UPDATED: 'ad.updated',
@@ -16,14 +16,13 @@ export const KAFKA_TOPICS = {
   AD_VIEWED: 'ad.viewed',
   AD_EXPIRED: 'ad.expired',
   AD_PROMOTED: 'ad.promoted',
-  
+
   // Responses
   AD_RESPONSE: 'ad.response',
   AD_ERROR: 'ad.error',
-  
+
   // Dead Letter Queue
   AD_DLQ: 'ad.dlq',
-
 
   // User Events
   USER_REGISTERED: 'user.registered',
@@ -31,7 +30,7 @@ export const KAFKA_TOPICS = {
   USER_LOGGED_OUT: 'user.logged.out',
   USER_UPDATED: 'user.updated',
   USER_DELETED: 'user.deleted',
-  
+
   // Ad-User integration
   USER_ADS_FETCHED: 'user.ads.fetched',
   USER_ADS_CREATED: 'user.ads.created',
@@ -48,4 +47,46 @@ export const KAFKA_TOPICS = {
   AD_AUTO_DISABLED: 'ad.auto.disabled',
   AD_REVIEW_REQUEST: 'ad.review.request',
 
+  // Chat Commands
+  CHAT_START_CONVERSATION: 'chat.start.conversation',
+  CHAT_LIST_CONVERSATIONS: 'chat.list.conversations',
+  CHAT_LIST_MESSAGES: 'chat.list.messages',
+  CHAT_SEND_MESSAGE: 'chat.send.message',
+  CHAT_DELETE_CONVERSATION: 'chat.delete.conversation',
+
+  // Chat Events
+  CHAT_CONVERSATION_STARTED: 'chat.conversation.started',
+  CHAT_MESSAGE_SENT: 'chat.message.sent',
+  CHAT_CONVERSATION_DELETED: 'chat.conversation.deleted',
+
+  // Call Commands
+  CALL_GET_HISTORY: 'call.get.history',
+  CALL_GET_BY_ID: 'call.get.by.id',
+  CALL_CREATE_INVITE: 'call.create.invite',
+  CALL_ACCEPT: 'call.accept',
+  CALL_REJECT: 'call.reject',
+  CALL_END: 'call.end',
+
+  // Call Events
+  CALL_INVITED: 'call.invited',
+  CALL_ACCEPTED: 'call.accepted',
+  CALL_REJECTED: 'call.rejected',
+  CALL_ENDED: 'call.ended',
+
+  // Analytics Commands
+  ANALYTICS_DEVICE_BREAKDOWN: 'analytics.device.breakdown',
+  ANALYTICS_TOP_REGIONS: 'analytics.top.regions',
+  ANALYTICS_TOP_PAGES: 'analytics.top.pages',
+  ANALYTICS_EVENTS: 'analytics.events',
+  ANALYTICS_RECENT_ACTIVITY: 'analytics.recent.activity',
+
+  // Audit Logs Commands
+  AUDIT_LOG_CREATE: 'audit.log.create',
+  AUDIT_LOG_LIST: 'audit.log.list',
+
+  // Audit Logs Events
+  AUDIT_LOG_CREATED: 'audit.log.created',
+
+  // Reports Commands
+  REPORTS_STATUS: 'reports.status',
 };

@@ -6,6 +6,13 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { User, UserDocument } from '../schemas/user.schema';
 
+interface JwtPayload {
+  sub: string;
+  email?: string;
+  role?: string;
+  name?: string;
+}
+
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
@@ -14,7 +21,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   ) {
     // Get secret from config service
     const secret = configService.get<string>('JWT_SECRET');
-    
+
     if (!secret) {
       throw new Error('JWT_SECRET is not defined in environment variables');
     }
@@ -26,26 +33,42 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(payload: any) {
+  async validate(payload: JwtPayload) {
     try {
       if (!payload || !payload.sub) {
-        throw new UnauthorizedException('Invalid JWT payload - missing sub claim');
+        throw new UnauthorizedException(
+          'Invalid JWT payload - missing sub claim',
+        );
       }
-      
+
+      // Handle admin tokens - they come from GOLO_Admin_Backend and have role: 'admin'
+      if (payload.role === 'admin') {
+        return {
+          id: payload.sub,
+          email: payload.email ?? '',
+          role: 'admin',
+          name: payload.name ?? payload.email ?? 'admin',
+        };
+      }
+
+      // For regular users, look them up in the database
       const user = await this.userModel.findById(payload.sub).exec();
       if (!user) {
         throw new UnauthorizedException('User not found');
       }
-      
+
       // Convert _id to string to avoid ObjectId issues
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+      const userId = (user._id as { toString(): string }).toString();
       return {
-        id: user._id.toString(),
+        id: userId,
         email: user.email,
         role: user.role,
         name: user.name,
       };
     } catch (error) {
-      console.error('[JWT Strategy] Validation failed:', error.message);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error('[JWT Strategy] Validation failed:', errorMsg);
       throw error;
     }
   }

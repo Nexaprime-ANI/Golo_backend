@@ -1,5 +1,5 @@
-const fs = require('fs');
-const path = require('path');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const filePath = path.join(process.cwd(), 'src/ads/dto/category-dtos/property.dto.ts');
 
@@ -7,12 +7,12 @@ if (fs.existsSync(filePath)) {
   let content = fs.readFileSync(filePath, 'utf8');
   
   // Check if file ends with closing brace
-  if (!content.trim().endsWith('}')) {
+  if (content.trim().endsWith('}')) {
+    console.log('✅ property.dto.ts already has correct braces');
+  } else {
     content = content.trim() + '\n}';
     fs.writeFileSync(filePath, content, 'utf8');
     console.log('✅ Fixed property.dto.ts - added missing brace');
-  } else {
-    console.log('✅ property.dto.ts already has correct braces');
   }
   
   // Count braces to ensure they match

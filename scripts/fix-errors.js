@@ -1,5 +1,5 @@
-const fs = require('fs');
-const path = require('path');
+const fs = require('node:fs');
+const path = require('node:path');
 
 console.log('🔧 Starting fixes...\n');
 
@@ -37,7 +37,7 @@ filesToCheck.forEach(filePath => {
   if (fs.existsSync(fullPath)) {
     let content = fs.readFileSync(fullPath, 'utf8');
     if (content.includes('5G')) {
-      content = content.replace(/5G/g, 'has5G');
+      content = content.replaceAll('5G', 'has5G');
       fs.writeFileSync(fullPath, content, 'utf8');
       console.log(`✅ Fixed 5G property in ${filePath}`);
     }
