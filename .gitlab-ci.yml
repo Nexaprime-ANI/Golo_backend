@@ -3,7 +3,7 @@ image: node:18-alpine
 stages:
   - lint
   - build
-  - codacy
+  - sonarqube
   - test
   - deploy
 
@@ -51,33 +51,25 @@ build:
 
 # ==================== SONARQUBE ====================
 
-codacy:
-  stage: codacy
-  image: docker:latest
-  services:
-    - docker:dind
-  variables:
-    DOCKER_HOST: tcp://docker:2375/
-    DOCKER_TLS_CERTDIR: ""
+sonarqube:
+  stage: sonarqube
+  image: sonarsource/sonar-scanner-cli:latest
   script:
-    - echo "Running Codacy analysis..."
-
+    - echo "Running SonarQube analysis..."
     - |
-      docker run --rm \
-        -e CODACY_PROJECT_TOKEN=$CODACY_PROJECT_TOKEN \
-        -e CI_COMMIT_BRANCH=$CI_COMMIT_BRANCH \
-        -e CI_COMMIT_SHA=$CI_COMMIT_SHA \
-        -v $(pwd):/code \
-        codacy/codacy-analysis-cli:latest analyze
-
-    - |
-      docker run --rm \
-        -e CODACY_PROJECT_TOKEN=$CODACY_PROJECT_TOKEN \
-        -v $(pwd):/code \
-        codacy/codacy-analysis-cli:latest upload-results
+      sonar-scanner \
+        -Dsonar.projectKey=nexaprime-ani_golo \
+        -Dsonar.organization=nexaprime-ani \
+        -Dsonar.host.url=${SONAR_HOST_URL} \
+        -Dsonar.token=${SONAR_TOKEN} \
+        -Dsonar.sources=src \
+        -Dsonar.tests=src \
+        -Dsonar.test.inclusions=**/*.spec.ts,**/*.test.ts \
+        -Dsonar.exclusions=node_modules/**,dist/**,coverage/**,*.js \
+        -Dsonar.typescript.tsconfigPath=tsconfig.json
   allow_failure: true 
   rules:
-    - if: '$CI_COMMIT_BRANCH == "feature"'
+    - if: '$SONAR_HOST_URL && $SONAR_TOKEN'
 
 # ==================== TEST ====================
 
