@@ -53,17 +53,26 @@ build:
 
 codacy:
   stage: codacy
-  image: codacy/codacy-analysis-cli:latest
+  image: docker:latest
+  services:
+    - docker:dind
+  variables:
+    DOCKER_HOST: tcp://docker:2375/
+    DOCKER_TLS_CERTDIR: ""
   script:
     - echo "Running Codacy analysis..."
 
-    # Run analysis
-    - codacy-analysis-cli analyze
+    - docker run --rm \
+        -e CODACY_PROJECT_TOKEN=$CODACY_PROJECT_TOKEN \
+        -e CI_COMMIT_BRANCH=$CI_COMMIT_BRANCH \
+        -e CI_COMMIT_SHA=$CI_COMMIT_SHA \
+        -v $(pwd):/code \
+        codacy/codacy-analysis-cli:latest analyze
 
-    # Upload results
-    - codacy-analysis-cli upload-results
-  variables:
-    CODACY_PROJECT_TOKEN: $CODACY_PROJECT_TOKEN
+    - docker run --rm \
+        -e CODACY_PROJECT_TOKEN=$CODACY_PROJECT_TOKEN \
+        -v $(pwd):/code \
+        codacy/codacy-analysis-cli:latest upload-results
   allow_failure: true 
   rules:
     - if: '$CI_COMMIT_BRANCH == "feature"'
