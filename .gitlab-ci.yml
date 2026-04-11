@@ -73,6 +73,7 @@ sonarqube:
   allow_failure: true 
   rules:
     - if: '$SONAR_HOST_URL && $SONAR_TOKEN'
+    - if: '$RUN_ONLY_SONAR'
 # ==================== TEST ====================
 
 test:
