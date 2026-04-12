@@ -29,20 +29,29 @@ export default registerAs('config', () => ({
     // 🔴 Make sure URI is required in production
     uri: process.env.MONGODB_URI,
   },
-  
-// src/config/configuration.ts
-kafka: {
-  enabled: parseBoolean(process.env.ENABLE_KAFKA ?? 'false'),
-  brokers: process.env.KAFKA_BROKERS ? process.env.KAFKA_BROKERS.split(',') : [],
-  clientId: process.env.KAFKA_CLIENT_ID || 'golo-backend',
-  groupId: process.env.KAFKA_GROUP_ID || 'golo-consumer-group',
-  sasl: process.env.KAFKA_SASL_USERNAME ? {
-    mechanism: process.env.KAFKA_SASL_MECHANISM || 'plain',
-    username: process.env.KAFKA_SASL_USERNAME,
-    password: process.env.KAFKA_SASL_PASSWORD,
-  } : undefined,
-  ssl: false,
-},
+  kafka: {
+    enabled: parseBoolean(process.env.ENABLE_KAFKA ?? 'false'),
+    brokers: process.env.KAFKA_BROKERS ? process.env.KAFKA_BROKERS.split(',') : [],
+    clientId: process.env.KAFKA_CLIENT_ID || 'golo-backend',
+    groupId: process.env.KAFKA_GROUP_ID || 'golo-consumer-group',
+    sasl: process.env.KAFKA_SASL_USERNAME
+      ? {
+          mechanism: process.env.KAFKA_SASL_MECHANISM || 'plain',
+          username: process.env.KAFKA_SASL_USERNAME,
+          password: process.env.KAFKA_SASL_PASSWORD,
+        }
+      : undefined,
+    ssl: false,
+  },
+
+  redis: {
+    enabled: parseBoolean(process.env.ENABLE_KAFKA ?? 'false'),
+    host: process.env.REDIS_HOST || '127.0.0.1',
+    port: parseInt(process.env.REDIS_PORT || '6379', 10),
+    password: process.env.REDIS_PASSWORD || undefined,
+    db: parseInt(process.env.REDIS_DB || '0', 10),
+    keyPrefix: process.env.REDIS_KEY_PREFIX || 'golo:',
+  },
   
   // 🔴 ADDED: JWT configuration (important for Railway)
   jwt: {

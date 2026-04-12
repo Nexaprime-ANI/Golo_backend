@@ -1,6 +1,6 @@
 
 
-import { Injectable, ConflictException, UnauthorizedException, NotFoundException, BadRequestException, ForbiddenException, Logger, InternalServerErrorException, Optional, forwardRef, Inject } from '@nestjs/common';
+import { Injectable, ConflictException, UnauthorizedException, NotFoundException, BadRequestException, ForbiddenException, Logger, InternalServerErrorException, Optional, forwardRef, Inject, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as bcrypt from 'bcrypt';
@@ -22,7 +22,7 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { Payment, PaymentDocument, PaymentStatus } from '../payments/schemas/payment.schema';
 
 @Injectable()
-export class UsersService {
+export class UsersService implements OnModuleInit {
 
   private readonly logger = new Logger(UsersService.name);
   private mailTransporter: nodemailer.Transporter | null = null;
@@ -91,6 +91,12 @@ export class UsersService {
       });
     } else {
       this.logger.warn('SMTP credentials missing; email OTP functionality disabled');
+    }
+  }
+
+  async onModuleInit() {
+    if (this.kafkaService) {
+      this.logger.log('Kafka service connected for UsersService');
     }
   }
 

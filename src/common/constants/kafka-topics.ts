@@ -20,6 +20,12 @@ export const KAFKA_TOPICS = {
   // Merchant Product Events
   MERCHANT_PRODUCT_CREATED: 'merchant.product.created',
   MERCHANT_PRODUCT_DELETED: 'merchant.product.deleted',
+
+  // Banner Promotion Events
+  BANNER_PROMOTION_SUBMITTED: 'banner.promotion.submitted',
+  BANNER_PROMOTION_REVIEWED: 'banner.promotion.reviewed',
+  BANNER_PROMOTION_PAID: 'banner.promotion.paid',
+  BANNER_PROMOTION_DELETED: 'banner.promotion.deleted',
   
   // Responses
   AD_RESPONSE: 'ad.response',

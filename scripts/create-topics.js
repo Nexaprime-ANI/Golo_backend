@@ -53,6 +53,12 @@ const topics = [
   'ad.review.request',
   'reports.status',
 
+  // Banner promotion topics
+  'banner.promotion.submitted',
+  'banner.promotion.reviewed',
+  'banner.promotion.paid',
+  'banner.promotion.deleted',
+
   // Chat command/event topics
   'chat.start.conversation',
   'chat.list.conversations',

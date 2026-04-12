@@ -14,11 +14,15 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { UserRole } from './schemas/user.schema';
+import { RedisService } from '../common/services/redis.service';
 
 @Controller('users')
 export class UsersController {
 
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly redisService: RedisService,
+  ) {}
 
   // ==================== USER REPORT ====================
   @Post(':id/report')
@@ -95,7 +99,14 @@ export class UsersController {
 
   @Get('dashboard/stats')
   async getDashboardStats() {
+    const cacheKey = 'golo:users:dashboard:stats';
+    const cached = await this.redisService.get<any>(cacheKey);
+    if (cached) {
+      return { success: true, data: cached, fromCache: true };
+    }
+
     const stats = await this.usersService.getDashboardStatsPublic();
+    await this.redisService.set(cacheKey, stats, 90);
     return { success: true, data: stats };
   }
 
