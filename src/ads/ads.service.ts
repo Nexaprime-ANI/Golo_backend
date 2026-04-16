@@ -33,8 +33,9 @@ import { AuditLogsService } from '../audit-logs/audit-logs.service';
 @Injectable()
 export class AdsService implements OnModuleInit, OnModuleDestroy {
   /**
-   * Get a single report by reportId, wit  async getReportByReportId(
-    re  async getReportByReportId(reportId: string): Promise<Record<string, unknown> | null> {
+   * Get a single report by reportId
+   */
+  async getReportByReportId(reportId: string): Promise<Record<string, unknown> | null> {
     try {
       this.logger.log(`Fetching enriched report for reportId: ${reportId}`);
       const results = await this.reportModel.aggregate([

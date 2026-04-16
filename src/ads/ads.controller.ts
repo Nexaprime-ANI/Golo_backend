@@ -1,7 +1,7 @@
 // ...existing code...
 import {
   Controller, Get, Post, Put, Delete, Body, Param, Query,
-  UsePipes, ValidationPipe, Logger, HttpCode, HttpStatus, UseGuards, Request, ForbiddenException
+  UsePipes, ValidationPipe, Logger, HttpCode, HttpStatus, UseGuards, Request, ForbiddenException, Optional
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
