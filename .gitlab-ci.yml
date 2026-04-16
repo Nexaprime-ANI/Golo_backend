@@ -114,17 +114,14 @@ staging-health-check:
 github_mirror:
   stage: sync-to-github
   image: alpine:latest
-
   before_script:
     - apk add --no-cache git
     - git config --global user.name "GitLab CI"
     - git config --global user.email "ci@gitlab.com"
-
   script:
     - GITHUB_REPO_URL="https://NexaprimeGit:${GITHUB_TOKEN}@github.com/NexaprimeGit/wavenxd-website.git"
     - git remote set-url github $GITHUB_REPO_URL || git remote add github $GITHUB_REPO_URL
     - git fetch github
     - git push -u github HEAD:main
-
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
