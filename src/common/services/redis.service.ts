@@ -1,50 +1,72 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Redis } from '@upstash/redis';
+import { createClient, RedisClientType } from 'redis';
 
 @Injectable()
-export class RedisService implements OnModuleInit {
+export class RedisService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RedisService.name);
-  private redisClient: Redis | null = null;
+  private redisClient: RedisClientType | null = null;
   private enabled: boolean = false;
 
   constructor(private configService: ConfigService) {}
 
-  async onModuleInit(): Promise<void> {
-    const redisUrl = this.configService.get<string>('UPSTASH_REDIS_REST_URL');
-    const redisToken = this.configService.get<string>(
-      'UPSTASH_REDIS_REST_TOKEN',
-    );
+  async onModuleInit() {
+    const kafkaEnabled = this.configService.get<boolean>('config.kafka.enabled');
+    const redisConfig = this.configService.get<{
+      enabled?: boolean;
+      host?: string;
+      port?: number;
+      password?: string;
+      db?: number;
+      keyPrefix?: string;
+    }>('config.redis');
 
-    if (!redisUrl || !redisToken || !redisUrl.includes('your-redis-db')) {
-      this.logger.warn(
-        '⚠️ Upstash Redis not configured - caching disabled. Please add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN to .env',
-      );
+    if (!kafkaEnabled || !redisConfig?.enabled) {
+      this.logger.warn('Redis caching disabled because Kafka is off');
       this.enabled = false;
       return;
     }
 
     try {
-      this.redisClient = new Redis({
-        url: redisUrl,
-        token: redisToken,
+      const host = redisConfig.host || '127.0.0.1';
+      const port = redisConfig.port || 6379;
+      const password = redisConfig.password ? `:${encodeURIComponent(redisConfig.password)}@` : '';
+      const db = Number.isInteger(redisConfig.db) ? redisConfig.db : 0;
+      const url = `redis://${password}${host}:${port}/${db}`;
+
+      this.redisClient = createClient({
+        url,
       });
 
-      // Test connection
+      this.redisClient.on('error', (error) => {
+        this.logger.error(`Redis client error: ${error.message}`);
+      });
+
+      await this.redisClient.connect();
       await this.redisClient.ping();
       this.enabled = true;
-      this.logger.log('✅ Upstash Redis connected and ready');
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      this.logger.error(`❌ Redis connection failed: ${errorMsg}`);
+      this.logger.log(`✅ Redis connected and ready at ${host}:${port}`);
+    } catch (error: any) {
+      this.logger.error(`❌ Redis connection failed: ${error.message}`);
       this.enabled = false;
+      this.redisClient = null;
+    }
+  }
+
+  async onModuleDestroy() {
+    if (this.redisClient) {
+      try {
+        await this.redisClient.quit();
+      } catch (error: any) {
+        this.logger.error(`Redis disconnect failed: ${error.message}`);
+      }
     }
   }
 
   /**
    * Get Redis client instance
    */
-  getClient(): Redis | null {
+  getClient(): RedisClientType | null {
     if (!this.enabled || !this.redisClient) {
       this.logger.warn('Redis not enabled, returning null');
       return null;
@@ -62,26 +84,18 @@ export class RedisService implements OnModuleInit {
   /**
    * Cache a value with TTL
    */
-  async set(
-    key: string,
-    value: unknown,
-    ttlSeconds?: number,
-  ): Promise<boolean> {
+  async set(key: string, value: any, ttlSeconds?: number): Promise<boolean> {
     if (!this.enabled || !this.redisClient) {
       return false;
     }
 
     try {
-      const ttlSecondsVal =
-        ttlSeconds ??
-        this.configService.get<number>('REDIS_CACHE_TTL_DEFAULT') ??
-        300;
-      await this.redisClient.setex(key, ttlSecondsVal, JSON.stringify(value));
-      this.logger.debug(`Cache SET: ${key} (TTL: ${ttlSecondsVal}s)`);
+      const ttl = ttlSeconds || Number(this.configService.get('REDIS_CACHE_TTL_DEFAULT')) || 300;
+      await this.redisClient.setEx(key, ttl, JSON.stringify(value));
+      this.logger.debug(`Cache SET: ${key} (TTL: ${ttl}s)`);
       return true;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Cache SET failed for ${key}: ${errorMsg}`);
+    } catch (error: any) {
+      this.logger.error(`Cache SET failed for ${key}: ${error.message}`);
       return false;
     }
   }
@@ -101,10 +115,16 @@ export class RedisService implements OnModuleInit {
         return null;
       }
       this.logger.debug(`Cache HIT: ${key}`);
+      if (typeof data === 'string') {
+        try {
+          return JSON.parse(data) as T;
+        } catch {
+          return data as T;
+        }
+      }
       return data as T;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Cache GET failed for ${key}: ${errorMsg}`);
+    } catch (error: any) {
+      this.logger.error(`Cache GET failed for ${key}: ${error.message}`);
       return null;
     }
   }
@@ -121,9 +141,8 @@ export class RedisService implements OnModuleInit {
       await this.redisClient.del(key);
       this.logger.debug(`Cache DEL: ${key}`);
       return true;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Cache DEL failed for ${key}: ${errorMsg}`);
+    } catch (error: any) {
+      this.logger.error(`Cache DEL failed for ${key}: ${error.message}`);
       return false;
     }
   }
@@ -141,14 +160,13 @@ export class RedisService implements OnModuleInit {
       if (keys.length === 0) {
         return 0;
       }
-      await this.redisClient.del(...keys);
-      this.logger.debug(
-        `Cache DEL pattern ${pattern}: deleted ${keys.length} keys`,
-      );
+      for (const key of keys) {
+        await this.redisClient.del(key);
+      }
+      this.logger.debug(`Cache DEL pattern ${pattern}: deleted ${keys.length} keys`);
       return keys.length;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Cache DEL pattern failed for ${pattern}: ${errorMsg}`);
+    } catch (error: any) {
+      this.logger.error(`Cache DEL pattern failed for ${pattern}: ${error.message}`);
       return 0;
     }
   }
@@ -165,9 +183,8 @@ export class RedisService implements OnModuleInit {
       const result = await this.redisClient.incr(key);
       this.logger.debug(`Cache INCR: ${key} = ${result}`);
       return result;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Cache INCR failed for ${key}: ${errorMsg}`);
+    } catch (error: any) {
+      this.logger.error(`Cache INCR failed for ${key}: ${error.message}`);
       return 0;
     }
   }
@@ -184,9 +201,8 @@ export class RedisService implements OnModuleInit {
       const result = await this.redisClient.decr(key);
       this.logger.debug(`Cache DECR: ${key} = ${result}`);
       return result;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Cache DECR failed for ${key}: ${errorMsg}`);
+    } catch (error: any) {
+      this.logger.error(`Cache DECR failed for ${key}: ${error.message}`);
       return 0;
     }
   }
@@ -202,9 +218,8 @@ export class RedisService implements OnModuleInit {
     try {
       const result = await this.redisClient.exists(key);
       return result === 1;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Cache EXISTS failed for ${key}: ${errorMsg}`);
+    } catch (error: any) {
+      this.logger.error(`Cache EXISTS failed for ${key}: ${error.message}`);
       return false;
     }
   }
@@ -220,9 +235,8 @@ export class RedisService implements OnModuleInit {
     try {
       await this.redisClient.expire(key, seconds);
       return true;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Cache EXPIRE failed for ${key}: ${errorMsg}`);
+    } catch (error: any) {
+      this.logger.error(`Cache EXPIRE failed for ${key}: ${error.message}`);
       return false;
     }
   }
@@ -244,9 +258,8 @@ export class RedisService implements OnModuleInit {
       await this.redisClient.ping();
       const latency = Date.now() - start;
       return { connected: true, latency };
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      return { connected: false, error: errorMsg };
+    } catch (error: any) {
+      return { connected: false, error: error.message };
     }
   }
 }

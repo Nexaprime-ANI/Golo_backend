@@ -1,22 +1,8 @@
 // ...existing code...
 import {
-  Controller,
-  Get,
-  Post,
-  Put,
-  Delete,
-  Body,
-  Param,
-  Query,
-  UsePipes,
-  ValidationPipe,
-  Logger,
-  HttpCode,
-  HttpStatus,
-  UseGuards,
-  Optional,
-} 
-from '@nestjs/common';
+  Controller, Get, Post, Put, Delete, Body, Param, Query,
+  UsePipes, ValidationPipe, Logger, HttpCode, HttpStatus, UseGuards, Request, ForbiddenException
+} from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -956,6 +942,9 @@ export class AdsController {
     }
   }
 
+  /**
+   * Merchant: Submit banner promotion request for admin review
+   */
   // ==================== ADMIN ROUTES (Admin only) ====================
 
   /**

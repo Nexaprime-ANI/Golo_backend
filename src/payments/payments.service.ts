@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
   Optional,
+  OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -40,7 +41,7 @@ interface RazorpayWebhookPayload {
 }
 
 @Injectable()
-export class PaymentsService {
+export class PaymentsService implements OnModuleInit {
   private readonly logger = new Logger(PaymentsService.name);
   private readonly razorpayKeyId: string | null;
   private readonly razorpayKeySecret: string | null;
@@ -69,6 +70,12 @@ export class PaymentsService {
       this.logger.warn(
         'Razorpay keys missing. Payment endpoints will not be functional.',
       );
+    }
+  }
+
+  async onModuleInit() {
+    if (this.kafkaService) {
+      this.logger.log('Kafka service connected for PaymentsService');
     }
   }
 

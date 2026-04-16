@@ -1,25 +1,12 @@
-import {
-  Injectable,
-  ConflictException,
-  UnauthorizedException,
-  NotFoundException,
-  BadRequestException,
-  ForbiddenException,
-  Logger,
-  InternalServerErrorException,
-  Optional,
-  forwardRef,
-  Inject,
-} from '@nestjs/common';
+
+
+import { Injectable, ConflictException, UnauthorizedException, NotFoundException, BadRequestException, ForbiddenException, Logger, InternalServerErrorException, Optional, forwardRef, Inject, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
 import { User, UserDocument, UserRole } from './schemas/user.schema';
-import {
-  Notification,
-  NotificationDocument,
-} from './schemas/notification.schema';
+import { Notification, NotificationDocument } from './schemas/notification.schema';
 import { Merchant, MerchantDocument } from './schemas/merchant.schema';
 import { UserReport, UserReportDocument } from './schemas/user-report.schema';
 import { RegisterDto } from './dto/register.dto';
@@ -32,48 +19,65 @@ import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import { AdsService } from '../ads/ads.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
-import {
-  Payment,
-  PaymentDocument,
-  PaymentStatus,
-} from '../payments/schemas/payment.schema';
+import { Payment, PaymentDocument, PaymentStatus } from '../payments/schemas/payment.schema';
 
 @Injectable()
-export class UsersService {
+export class UsersService implements OnModuleInit {
+
   private readonly logger = new Logger(UsersService.name);
   private mailTransporter: nodemailer.Transporter | null = null;
   private mailFrom: string | null = null;
 
+  /**
+   * Admin: Send a warning notification to a user
+   */
+  async adminWarnUser(userId: string, message: string, adminId: string, adminEmail: string): Promise<void> {
+    this.logger.log(`Admin sending warning to user: ${userId}`);
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    await this.notificationModel.create({
+      recipientId: userId,
+      senderId: adminId,
+      senderName: adminEmail || 'admin',
+      adId: '-',
+      adTitle: '-',
+      type: 'admin_warning',
+      message: message || 'You have received a warning from admin.',
+      read: false,
+    });
+    if (this.auditLogsService) {
+      await this.auditLogsService.log({
+        action: 'USER_WARNED',
+        adminId,
+        adminEmail,
+        targetId: userId,
+        targetType: 'User',
+        details: { message },
+      });
+    }
+  }
+
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
-    @InjectModel(Notification.name)
-    private notificationModel: Model<NotificationDocument>,
+    @InjectModel(Notification.name) private notificationModel: Model<NotificationDocument>,
     @InjectModel(Merchant.name) private merchantModel: Model<MerchantDocument>,
-    @InjectModel(UserReport.name)
-    private userReportModel: Model<UserReportDocument>,
+    @InjectModel(UserReport.name) private userReportModel: Model<UserReportDocument>,
     private jwtService: JwtService,
     private readonly auditLogsService: AuditLogsService,
     private configService: ConfigService,
     @Optional() private kafkaService?: KafkaService,
-    @Optional()
-    @Inject(forwardRef(() => AdsService))
-    private adsService?: AdsService,
-    @Optional()
-    @InjectModel(Payment.name)
-    private paymentModel?: Model<PaymentDocument>,
+    @Optional() @Inject(forwardRef(() => AdsService)) private adsService?: AdsService,
+    @Optional() @InjectModel(Payment.name) private paymentModel?: Model<PaymentDocument>,
   ) {
     const smtpHost = this.configService.get<string>('SMTP_HOST');
-    const smtpPort = Number(
-      this.configService.get<string>('SMTP_PORT') || '587',
-    );
+    const smtpPort = Number(this.configService.get<string>('SMTP_PORT') || '587');
     const smtpUser = this.configService.get<string>('SMTP_USER');
     const smtpPass = this.configService.get<string>('SMTP_PASS');
-    this.mailFrom =
-      this.configService.get<string>('SMTP_FROM') || smtpUser || null;
+    this.mailFrom = this.configService.get<string>('SMTP_FROM') || smtpUser || null;
 
-    this.logger.debug(
-      `SMTP config host=${!!smtpHost} port=${smtpPort} user=${!!smtpUser}`,
-    );
+    this.logger.debug(`SMTP config host=${!!smtpHost} port=${smtpPort} user=${!!smtpUser}`);
 
     if (smtpHost && smtpUser && smtpPass && this.mailFrom) {
       this.mailTransporter = nodemailer.createTransport({
@@ -86,67 +90,57 @@ export class UsersService {
         },
       });
     } else {
-      this.logger.warn(
-        'SMTP credentials missing; email OTP functionality disabled',
-      );
+      this.logger.warn('SMTP credentials missing; email OTP functionality disabled');
+    }
+  }
+
+  async onModuleInit() {
+    if (this.kafkaService) {
+      this.logger.log('Kafka service connected for UsersService');
     }
   }
 
   // ==================== PUBLIC METHODS ====================
-
   async getUserReportStats() {
+    // Example stats: total, pending, under investigation, resolved reports
     const total = await this.userReportModel.countDocuments();
-    const pending = await this.userReportModel.countDocuments({
-      status: 'pending',
-    });
-    const underInvestigation = await this.userReportModel.countDocuments({
-      status: 'under_investigation',
-    });
-    const resolved = await this.userReportModel.countDocuments({
-      status: { $in: ['resolved', 'dismissed'] },
-    });
+    const pending = await this.userReportModel.countDocuments({ status: 'pending' });
+    const underInvestigation = await this.userReportModel.countDocuments({ status: 'under_investigation' });
+    const resolved = await this.userReportModel.countDocuments({ status: { $in: ['resolved', 'dismissed'] } });
     return { total, pending, underInvestigation, resolved };
   }
-
   async register(registerDto: RegisterDto): Promise<UserResponseDto> {
     this.logger.log(`Registering new user: ${registerDto.email}`);
-
-    const existingUser = await this.userModel
-      .findOne({ email: registerDto.email })
-      .exec();
+    
+    // Check if user exists
+    const existingUser = await this.userModel.findOne({ email: registerDto.email }).exec();
     if (existingUser) {
       throw new ConflictException('User with this email already exists');
     }
 
+    // Hash password
     const hashedPassword = await bcrypt.hash(registerDto.password, 10);
 
+    // Check for admin email in config
     const adminEmail = this.configService.get<string>('ADMIN_EMAIL');
-    const isSystemAdmin =
-      adminEmail &&
-      registerDto.email.toLowerCase() === adminEmail.toLowerCase();
+    const isSystemAdmin = adminEmail && registerDto.email.toLowerCase() === adminEmail.toLowerCase();
 
-    const accountType =
-      registerDto.accountType === 'merchant' ? 'merchant' : 'user';
+    const accountType = registerDto.accountType === 'merchant' ? 'merchant' : 'user';
 
     if (accountType === 'merchant') {
       if (!registerDto.storeName?.trim()) {
-        throw new BadRequestException(
-          'Store name is required for merchant registration',
-        );
+        throw new BadRequestException('Store name is required for merchant registration');
       }
       if (!registerDto.storeEmail?.trim()) {
-        throw new BadRequestException(
-          'Store email is required for merchant registration',
-        );
+        throw new BadRequestException('Store email is required for merchant registration');
       }
     }
 
     const assignedRole = isSystemAdmin
       ? UserRole.ADMIN
-      : accountType === 'merchant'
-        ? UserRole.MERCHANT
-        : UserRole.USER;
+      : (accountType === 'merchant' ? UserRole.MERCHANT : UserRole.USER);
 
+    // Create user (Admin if matches config, else based on account type)
     const user = new this.userModel({
       name: registerDto.name,
       email: registerDto.email,
@@ -178,6 +172,7 @@ export class UsersService {
       });
     }
 
+    // Emit Kafka event
     if (this.kafkaService) {
       await this.kafkaService.emit(KAFKA_TOPICS.USER_REGISTERED, {
         userId: savedUser._id,
@@ -192,79 +187,52 @@ export class UsersService {
     return this.toResponseDto(savedUser);
   }
 
-  async login(
-    loginDto: LoginDto,
-    ip?: string,
-  ): Promise<{
-    accessToken: string;
-    refreshToken: string;
-    user: UserResponseDto;
-  }> {
+  async login(loginDto: LoginDto, ip?: string): Promise<{ accessToken: string; refreshToken: string; user: UserResponseDto }> {
     this.logger.log(`Login attempt: ${loginDto.email}`);
-
+    
     const user = await this.userModel.findOne({ email: loginDto.email }).exec();
-
     if (!user) {
       this.logger.warn(`Login failed - user not found: ${loginDto.email}`);
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const isPasswordValid = await bcrypt.compare(
-      loginDto.password,
-      user.password,
-    );
+    const isPasswordValid = await bcrypt.compare(loginDto.password, user.password);
     if (!isPasswordValid) {
       this.logger.warn(`Login failed - invalid password: ${loginDto.email}`);
       throw new UnauthorizedException('Invalid credentials');
     }
 
     if (user.isBanned) {
+      // Check if banUntil is set and in the future
       if (user.banUntil && new Date(user.banUntil) > new Date()) {
         const until = new Date(user.banUntil);
-        const daysLeft = Math.ceil(
-          (until.getTime() - Date.now()) / (1000 * 60 * 60 * 24),
-        );
-        this.logger.warn(
-          `Login failed - user is suspended until ${until.toISOString()}: ${loginDto.email}`,
-        );
-        throw new ForbiddenException(
-          `Your account is suspended until ${until.toLocaleDateString()} (${daysLeft} day(s) left). Reason: ${user.banReason || 'No reason provided'}`,
-        );
+        const daysLeft = Math.ceil((until.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+        this.logger.warn(`Login failed - user is suspended until ${until.toISOString()}: ${loginDto.email}`);
+        throw new ForbiddenException(`Your account is suspended until ${until.toLocaleDateString()} (${daysLeft} day(s) left). Reason: ${user.banReason || 'No reason provided'}`);
       } else {
-        await this.userModel.findByIdAndUpdate(user._id, {
-          $set: { isBanned: false, banReason: null, banUntil: null },
-        });
+        // Ban expired, auto-unban
+        await this.userModel.findByIdAndUpdate(user._id, { $set: { isBanned: false, banReason: null, banUntil: null } });
       }
     }
 
-    if (
-      loginDto.accountType === 'merchant' &&
-      user.accountType !== 'merchant'
-    ) {
-      throw new UnauthorizedException(
-        'Merchant account not found for this email',
-      );
+    if (loginDto.accountType === 'merchant' && user.accountType !== 'merchant') {
+      throw new UnauthorizedException('Merchant account not found for this email');
     }
 
-    if (
-      user.accountType === 'merchant' &&
-      user.role !== UserRole.ADMIN &&
-      user.role !== UserRole.MERCHANT
-    ) {
+    if (user.accountType === 'merchant' && user.role !== UserRole.ADMIN && user.role !== UserRole.MERCHANT) {
       user.role = UserRole.MERCHANT;
       await user.save();
     }
 
+    // Auto-promote to admin if email matches config
     const adminEmail = this.configService.get<string>('ADMIN_EMAIL');
-    if (
-      user.email.toLowerCase() === adminEmail?.toLowerCase() &&
-      user.role !== UserRole.ADMIN
-    ) {
+    if (adminEmail && user.email.toLowerCase() === adminEmail.toLowerCase() && user.role !== UserRole.ADMIN) {
       this.logger.log(`Auto-promoting ${user.email} to ADMIN based on config`);
       user.role = UserRole.ADMIN;
       await user.save();
     }
 
+    // Generate tokens
     const payload = { sub: user._id, email: user.email, role: user.role };
     const accessToken = this.jwtService.sign(payload, {
       secret: this.configService.get('JWT_SECRET'),
@@ -275,19 +243,16 @@ export class UsersService {
       expiresIn: this.configService.get('JWT_REFRESH_EXPIRATION') || '7d',
     });
 
-    await this.userModel
-      .updateOne(
-        { _id: user._id },
-        {
-          $push: { refreshTokens: refreshToken },
-          $set: {
-            'metadata.lastLoginAt': new Date(),
-            'metadata.lastLoginIp': ip,
-          },
-        },
-      )
-      .exec();
+    // Save refresh token
+    await this.userModel.updateOne(
+      { _id: user._id },
+      {
+        $push: { refreshTokens: refreshToken },
+        $set: { 'metadata.lastLoginAt': new Date(), 'metadata.lastLoginIp': ip },
+      }
+    ).exec();
 
+    // Emit Kafka event
     if (this.kafkaService) {
       await this.kafkaService.emit(KAFKA_TOPICS.USER_LOGGED_IN, {
         userId: user._id,
@@ -300,13 +265,9 @@ export class UsersService {
 
     this.logger.log(`Login successful: ${user.email}`);
 
-    const merchantProfile =
-      user.accountType === 'merchant'
-        ? await this.merchantModel
-            .findOne({ userId: user._id.toString() })
-            .lean()
-            .exec()
-        : null;
+    const merchantProfile = user.accountType === 'merchant'
+      ? await this.merchantModel.findOne({ userId: user._id.toString() }).lean().exec()
+      : null;
 
     return {
       accessToken,
@@ -318,18 +279,10 @@ export class UsersService {
   async socialAuth(
     socialAuthDto: SocialAuthDto,
     ip?: string,
-  ): Promise<{
-    accessToken: string;
-    refreshToken: string;
-    user: UserResponseDto;
-  }> {
-    this.logger.log(
-      `Social auth: ${socialAuthDto.email} via ${socialAuthDto.provider}`,
-    );
+  ): Promise<{ accessToken: string; refreshToken: string; user: UserResponseDto }> {
+    this.logger.log(`Social auth: ${socialAuthDto.email} via ${socialAuthDto.provider}`);
 
-    let user = await this.userModel
-      .findOne({ email: socialAuthDto.email })
-      .exec();
+    let user = await this.userModel.findOne({ email: socialAuthDto.email }).exec();
 
     if (!user) {
       const generatedPassword = await bcrypt.hash(
@@ -414,7 +367,7 @@ export class UsersService {
       });
 
       const user = await this.userModel.findById(payload.sub).exec();
-      if (!user?.refreshTokens.includes(refreshToken)) {
+      if (!user || !user.refreshTokens.includes(refreshToken)) {
         throw new UnauthorizedException('Invalid refresh token');
       }
 
@@ -426,18 +379,18 @@ export class UsersService {
 
       return { accessToken };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Refresh token failed: ${message}`);
+      this.logger.error(`Refresh token failed: ${error.message}`);
       throw new UnauthorizedException('Invalid refresh token');
     }
   }
 
   async logout(userId: string, refreshToken: string): Promise<void> {
     this.logger.log(`Logout user: ${userId}`);
-
-    await this.userModel
-      .updateOne({ _id: userId }, { $pull: { refreshTokens: refreshToken } })
-      .exec();
+    
+    await this.userModel.updateOne(
+      { _id: userId },
+      { $pull: { refreshTokens: refreshToken } }
+    ).exec();
 
     if (this.kafkaService) {
       await this.kafkaService.emit(KAFKA_TOPICS.USER_LOGGED_OUT, {
@@ -453,18 +406,14 @@ export class UsersService {
 
   async getProfile(userId: string): Promise<UserResponseDto> {
     this.logger.log(`Getting profile for user: ${userId}`);
-
+    
     const user = await this.userModel.findById(userId).exec();
     if (!user) {
       throw new NotFoundException('User not found');
     }
-    const merchantProfile =
-      user.accountType === 'merchant'
-        ? await this.merchantModel
-            .findOne({ userId: user._id.toString() })
-            .lean()
-            .exec()
-        : null;
+    const merchantProfile = user.accountType === 'merchant'
+      ? await this.merchantModel.findOne({ userId: user._id.toString() }).lean().exec()
+      : null;
     return this.toResponseDto(user, merchantProfile);
   }
 
@@ -475,65 +424,48 @@ export class UsersService {
       throw new ForbiddenException('Merchant access required');
     }
 
-    const merchant = await this.merchantModel
-      .findOne({ userId: user._id.toString() })
-      .lean()
-      .exec();
+    const merchant = await this.merchantModel.findOne({ userId: user._id.toString() }).lean().exec();
     if (!merchant) throw new NotFoundException('Merchant profile not found');
     return merchant;
   }
 
-  async updateProfile(
-    userId: string,
-    updateData: any,
-  ): Promise<UserResponseDto> {
+  async updateProfile(userId: string, updateData: any): Promise<UserResponseDto> {
     this.logger.log(`Updating profile for user: ${userId}`);
     this.logger.debug(`Update data received: ${JSON.stringify(updateData)}`);
-
+    
+    // Check if email is being changed and if it's already taken
     if (updateData.email) {
-      this.logger.log(
-        `Checking if email ${updateData.email} is already in use`,
-      );
-      const existingUser = await this.userModel
-        .findOne({
-          email: updateData.email,
-          _id: { $ne: userId },
-        })
-        .exec();
-
+      this.logger.log(`Checking if email ${updateData.email} is already in use`);
+      const existingUser = await this.userModel.findOne({ 
+        email: updateData.email,
+        _id: { $ne: userId }
+      }).exec();
+      
       if (existingUser) {
         throw new ConflictException('Email is already in use');
       }
     }
-
+    
+    // Only allow updating specific fields
     const allowedUpdates: any = {};
-
+    
     if (updateData.name) allowedUpdates.name = updateData.name;
     if (updateData.email) allowedUpdates.email = updateData.email;
-    if (updateData.profile?.phone)
-      allowedUpdates['profile.phone'] = updateData.profile.phone;
-    if (updateData.profile?.address)
-      allowedUpdates['profile.address'] = updateData.profile.address;
-    if (updateData.profile?.city)
-      allowedUpdates['profile.city'] = updateData.profile.city;
-    if (updateData.profile?.state)
-      allowedUpdates['profile.state'] = updateData.profile.state;
-    if (updateData.profile?.pincode)
-      allowedUpdates['profile.pincode'] = updateData.profile.pincode;
-    if (updateData.profile?.avatar)
-      allowedUpdates['profile.avatar'] = updateData.profile.avatar;
-    if (updateData.profile?.bio)
-      allowedUpdates['profile.bio'] = updateData.profile.bio;
+    if (updateData.profile?.phone) allowedUpdates['profile.phone'] = updateData.profile.phone;
+    if (updateData.profile?.address) allowedUpdates['profile.address'] = updateData.profile.address;
+    if (updateData.profile?.city) allowedUpdates['profile.city'] = updateData.profile.city;
+    if (updateData.profile?.state) allowedUpdates['profile.state'] = updateData.profile.state;
+    if (updateData.profile?.pincode) allowedUpdates['profile.pincode'] = updateData.profile.pincode;
+    if (updateData.profile?.avatar) allowedUpdates['profile.avatar'] = updateData.profile.avatar;
+    if (updateData.profile?.bio) allowedUpdates['profile.bio'] = updateData.profile.bio;
 
     this.logger.debug(`Allowed updates: ${JSON.stringify(allowedUpdates)}`);
 
-    const user = await this.userModel
-      .findByIdAndUpdate(
-        userId,
-        { $set: { ...allowedUpdates, updatedAt: new Date() } },
-        { new: true },
-      )
-      .exec();
+    const user = await this.userModel.findByIdAndUpdate(
+      userId,
+      { $set: { ...allowedUpdates, updatedAt: new Date() } },
+      { new: true }
+    ).exec();
 
     if (!user) {
       throw new NotFoundException('User not found');
@@ -545,61 +477,61 @@ export class UsersService {
   async findById(userId: string): Promise<UserResponseDto> {
     try {
       this.logger.log(`Find by ID: ${userId}`);
-
-      if (!new RegExp(/^[0-9a-fA-F]{24}$/).exec(userId)) {
+      
+      // Check if userId is a valid ObjectId format
+      if (!userId.match(/^[0-9a-fA-F]{24}$/)) {
         throw new BadRequestException('Invalid user ID format');
       }
-
+      
       const user = await this.userModel.findById(userId).exec();
       if (!user) {
         throw new NotFoundException(`User with ID ${userId} not found`);
       }
       return this.toResponseDto(user);
     } catch (error) {
-      const err = error as { name?: string; message?: string };
-      if (err.name === 'CastError') {
+      if (error.name === 'CastError') {
         throw new BadRequestException('Invalid user ID format');
       }
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Error in findById: ${message}`);
+      this.logger.error(`Error in findById: ${error.message}`);
       throw error;
     }
   }
 
+  // 🔴 FIXED: getUserById method with proper logging
   async getUserById(userId: string): Promise<UserResponseDto> {
     try {
       this.logger.log(`Getting user by ID: ${userId}`);
-
-      if (!new RegExp(/^[0-9a-fA-F]{24}$/).exec(userId)) {
+      
+      // Check if userId is a valid ObjectId format
+      if (!userId || !userId.match(/^[0-9a-fA-F]{24}$/)) {
         this.logger.warn(`Invalid user ID format: ${userId}`);
         throw new BadRequestException('Invalid user ID format');
       }
-
+      
+      // Find user in database
       const user = await this.userModel.findById(userId).exec();
-
+      
+      // Check if user exists
       if (!user) {
         this.logger.warn(`User not found: ${userId}`);
         throw new NotFoundException(`User with ID ${userId} not found`);
       }
-
+      
       this.logger.log(`User found: ${user.email}`);
       return this.toResponseDto(user);
+      
     } catch (error) {
+      // Handle different types of errors
       if (error.name === 'CastError') {
         this.logger.error(`Cast error for ID ${userId}`);
         throw new BadRequestException('Invalid user ID format');
       }
-
-      if (
-        error instanceof NotFoundException ||
-        error instanceof BadRequestException
-      ) {
+      
+      if (error instanceof NotFoundException || error instanceof BadRequestException) {
         throw error;
       }
-
-      this.logger.error(
-        `Unexpected error getting user ${userId}: ${error.message}`,
-      );
+      
+      this.logger.error(`Unexpected error getting user ${userId}: ${error.message}`);
       throw new InternalServerErrorException('Failed to get user');
     }
   }
@@ -609,14 +541,11 @@ export class UsersService {
     return user ? this.toResponseDto(user) : null;
   }
 
-  async getAllUsers(
-    page: number = 1,
-    limit: number = 10,
-  ): Promise<{ users: UserResponseDto[]; total: number }> {
+  async getAllUsers(page: number = 1, limit: number = 10): Promise<{ users: UserResponseDto[]; total: number }> {
     this.logger.log(`Getting all users - Page: ${page}, Limit: ${limit}`);
-
+    
     const skip = (page - 1) * limit;
-
+    
     const [users, total] = await Promise.all([
       this.userModel
         .find()
@@ -624,21 +553,18 @@ export class UsersService {
         .limit(limit)
         .sort({ createdAt: -1 })
         .exec(),
-      this.userModel.countDocuments(),
+      this.userModel.countDocuments()
     ]);
 
     return {
-      users: users.map((user) => this.toResponseDto(user)),
+      users: users.map(user => this.toResponseDto(user)),
       total,
     };
   }
 
   // ==================== ADMIN METHODS ====================
 
-  async adminGetAllUsers(
-    page: number = 1,
-    limit: number = 10,
-  ): Promise<{ users: UserResponseDto[]; total: number }> {
+  async adminGetAllUsers(page: number = 1, limit: number = 10): Promise<{ users: UserResponseDto[]; total: number }> {
     this.logger.log(`Admin getting all users - Page: ${page}, Limit: ${limit}`);
     return this.getAllUsers(page, limit);
   }
@@ -648,21 +574,15 @@ export class UsersService {
     return this.findById(userId);
   }
 
-  async adminUpdateUser(
-    userId: string,
-    updateData: any,
-    adminId: string,
-    adminEmail: string,
-  ): Promise<UserResponseDto> {
+  async adminUpdateUser(userId: string, updateData: any, adminId: string, adminEmail: string): Promise<UserResponseDto> {
     this.logger.log(`Admin updating user: ${userId}`);
-
-    const user = await this.userModel
-      .findByIdAndUpdate(
-        userId,
-        { $set: { ...updateData, updatedAt: new Date() } },
-        { new: true },
-      )
-      .exec();
+    
+    // Admin can update any field
+    const user = await this.userModel.findByIdAndUpdate(
+      userId,
+      { $set: { ...updateData, updatedAt: new Date() } },
+      { new: true }
+    ).exec();
 
     if (!user) {
       throw new NotFoundException('User not found');
@@ -674,19 +594,15 @@ export class UsersService {
       adminEmail,
       targetId: userId,
       targetType: 'User',
-      details: { updatedFields: updateData },
+      details: { updatedFields: updateData }
     });
 
     return this.toResponseDto(user);
   }
 
-  async adminDeleteUser(
-    userId: string,
-    adminId: string,
-    adminEmail: string,
-  ): Promise<void> {
+  async adminDeleteUser(userId: string, adminId: string, adminEmail: string): Promise<void> {
     this.logger.log(`Admin deleting user: ${userId}`);
-
+    
     const result = await this.userModel.deleteOne({ _id: userId }).exec();
     if (result.deletedCount === 0) {
       throw new NotFoundException('User not found');
@@ -697,7 +613,7 @@ export class UsersService {
       adminId,
       adminEmail,
       targetId: userId,
-      targetType: 'User',
+      targetType: 'User'
     });
 
     if (this.kafkaService) {
@@ -710,34 +626,20 @@ export class UsersService {
     }
   }
 
-  async banUser(
-    userId: string,
-    reason: string,
-    adminId: string,
-    adminEmail: string,
-    durationDays?: number,
-  ): Promise<UserResponseDto> {
-    this.logger.log(
-      `Admin banning user: ${userId} for ${durationDays || 'permanent'} days`,
-    );
+  /**
+   * Ban a user for a given duration (in days). If duration is not provided, ban is permanent.
+   */
+  async banUser(userId: string, reason: string, adminId: string, adminEmail: string, durationDays?: number): Promise<UserResponseDto> {
+    this.logger.log(`Admin banning user: ${userId} for ${durationDays || 'permanent'} days`);
     let banUntil: Date | null = null;
     if (durationDays && durationDays > 0) {
       banUntil = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
     }
-    const user = await this.userModel
-      .findByIdAndUpdate(
-        userId,
-        {
-          $set: {
-            isBanned: true,
-            banReason: reason,
-            banUntil: banUntil,
-            updatedAt: new Date(),
-          },
-        },
-        { new: true },
-      )
-      .exec();
+    const user = await this.userModel.findByIdAndUpdate(
+      userId,
+      { $set: { isBanned: true, banReason: reason, banUntil: banUntil, updatedAt: new Date() } },
+      { new: true }
+    ).exec();
 
     if (!user) {
       throw new NotFoundException('User not found');
@@ -749,32 +651,19 @@ export class UsersService {
       adminEmail,
       targetId: userId,
       targetType: 'User',
-      details: { reason, banUntil },
+      details: { reason, banUntil }
     });
 
     return this.toResponseDto(user);
   }
 
-  async unbanUser(
-    userId: string,
-    adminId: string,
-    adminEmail: string,
-  ): Promise<UserResponseDto> {
+  async unbanUser(userId: string, adminId: string, adminEmail: string): Promise<UserResponseDto> {
     this.logger.log(`Admin unbanning user: ${userId}`);
-    const user = await this.userModel
-      .findByIdAndUpdate(
-        userId,
-        {
-          $set: {
-            isBanned: false,
-            banReason: null,
-            banUntil: null,
-            updatedAt: new Date(),
-          },
-        },
-        { new: true },
-      )
-      .exec();
+    const user = await this.userModel.findByIdAndUpdate(
+      userId,
+      { $set: { isBanned: false, banReason: null, banUntil: null, updatedAt: new Date() } },
+      { new: true }
+    ).exec();
 
     if (!user) {
       throw new NotFoundException('User not found');
@@ -785,7 +674,7 @@ export class UsersService {
       adminId,
       adminEmail,
       targetId: userId,
-      targetType: 'User',
+      targetType: 'User'
     });
 
     return this.toResponseDto(user);
@@ -793,20 +682,17 @@ export class UsersService {
 
   async adminGetStats(): Promise<any> {
     this.logger.log('Admin getting stats');
-
+    
     const totalUsers = await this.userModel.countDocuments();
-    const totalAdmins = await this.userModel.countDocuments({
-      role: UserRole.ADMIN,
-    });
-    const totalRegularUsers = await this.userModel.countDocuments({
-      role: UserRole.USER,
-    });
+    const totalAdmins = await this.userModel.countDocuments({ role: UserRole.ADMIN });
+    const totalRegularUsers = await this.userModel.countDocuments({ role: UserRole.USER });
     const recentUsers = await this.userModel
       .find()
       .sort({ createdAt: -1 })
       .limit(5)
       .exec();
 
+    // Fetch ads-related stats if AdsService is available
     let pendingReports = 0;
     let totalAds = 0;
     if (this.adsService) {
@@ -824,7 +710,7 @@ export class UsersService {
       totalRegularUsers,
       pendingReports,
       totalAds,
-      recentUsers: recentUsers.map((u) => this.toResponseDto(u)),
+      recentUsers: recentUsers.map(u => this.toResponseDto(u)),
     };
   }
 
@@ -858,9 +744,7 @@ export class UsersService {
         pendingApprovals = pendingReports;
         overallReports = reportsCount;
       } catch (error) {
-        this.logger.warn(
-          `Failed to fetch ads dashboard stats: ${error.message}`,
-        );
+        this.logger.warn(`Failed to fetch ads dashboard stats: ${error.message}`);
       }
     }
 
@@ -905,9 +789,7 @@ export class UsersService {
         const netInPaise = Math.max(grossInPaise - refundedInPaise, 0);
         platformRevenue = netInPaise / 100;
       } catch (error) {
-        this.logger.warn(
-          `Failed to fetch payment dashboard stats: ${error.message}`,
-        );
+        this.logger.warn(`Failed to fetch payment dashboard stats: ${error.message}`);
       }
     }
 
@@ -922,189 +804,6 @@ export class UsersService {
     };
   }
 
-  // ==================== MANAGER ADMIN METHODS ====================
-
-  async adminGetAllManagers(): Promise<UserResponseDto[]> {
-    const managers = await this.userModel
-      .find({ role: UserRole.MANAGER })
-      .sort({ createdAt: -1 })
-      .exec();
-    return managers.map((user) => this.toResponseDto(user));
-  }
-
-  async adminCreateManager(
-    dto: RegisterDto,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _adminId: string,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _adminEmail: string,
-  ): Promise<User> {
-    const existingUser = await this.userModel
-      .findOne({ email: dto.email })
-      .exec();
-    if (existingUser) {
-      throw new ConflictException('User with this email already exists');
-    }
-
-    const hashedPassword = await bcrypt.hash(dto.password, 10);
-
-    const manager = new this.userModel({
-      name: dto.name,
-      email: dto.email,
-      password: hashedPassword,
-      role: UserRole.MANAGER,
-      accountType: 'user',
-      profile: {},
-      metadata: {
-        registeredIp: '0.0.0.0',
-      },
-      refreshTokens: [],
-    });
-
-    const savedManager = await manager.save();
-
-    if (this.kafkaService) {
-      await this.kafkaService.emit(KAFKA_TOPICS.USER_REGISTERED, {
-        userId: savedManager._id,
-        email: savedManager.email,
-        role: savedManager.role,
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    return savedManager;
-  }
-
-  async adminUpdateManager(
-    id: string,
-    dto: any,
-    adminId: string,
-    adminEmail: string,
-  ): Promise<UserResponseDto> {
-    const allowedUpdates: any = {};
-    if (dto.name) allowedUpdates.name = dto.name;
-    if (dto.email) allowedUpdates.email = dto.email;
-    if (dto.profile?.phone) allowedUpdates['profile.phone'] = dto.profile.phone;
-    const manager = await this.userModel
-      .findOneAndUpdate(
-        { _id: id, role: UserRole.MANAGER },
-        { $set: { ...allowedUpdates, updatedAt: new Date() } },
-        { new: true },
-      )
-      .exec();
-    if (!manager) throw new NotFoundException('Manager not found');
-    await this.auditLogsService.log({
-      action: 'MANAGER_UPDATED',
-      adminId,
-      adminEmail,
-      targetId: id,
-      targetType: 'User',
-      details: { updatedFields: allowedUpdates },
-    });
-    return this.toResponseDto(manager);
-  }
-
-  async adminDeleteManager(
-    id: string,
-    adminId: string,
-    adminEmail: string,
-  ): Promise<void> {
-    if (!id || typeof id !== 'string') {
-      this.logger.warn(`adminDeleteManager called with invalid id: ${id}`);
-      throw new BadRequestException('Invalid manager id');
-    }
-    const { Types } = await import('mongoose');
-    if (!Types.ObjectId.isValid(id)) {
-      this.logger.warn(`adminDeleteManager invalid ObjectId format: ${id}`);
-      throw new BadRequestException('Invalid manager id format');
-    }
-
-    try {
-      const result = await this.userModel
-        .deleteOne({ _id: id, role: UserRole.MANAGER })
-        .exec();
-      if (result.deletedCount === 0)
-        throw new NotFoundException('Manager not found');
-      await this.auditLogsService.log({
-        action: 'MANAGER_DELETED',
-        adminId,
-        adminEmail,
-        targetId: id,
-        targetType: 'User',
-      });
-    } catch (error) {
-      this.logger.error(`Error deleting manager ${id}: ${error.message}`);
-      if (error.name === 'CastError') {
-        throw new BadRequestException('Invalid manager id format');
-      }
-      throw error;
-    }
-  }
-
-  async adminDiscardManager(
-    id: string,
-    adminId: string,
-    adminEmail: string,
-  ): Promise<void> {
-    const manager = await this.userModel
-      .findOneAndUpdate(
-        { _id: id, role: UserRole.MANAGER },
-        {
-          $set: {
-            isBanned: true,
-            banReason: 'Discarded by admin',
-            updatedAt: new Date(),
-          },
-        },
-        { new: true },
-      )
-      .exec();
-    if (!manager) throw new NotFoundException('Manager not found');
-    await this.auditLogsService.log({
-      action: 'MANAGER_DISCARDED',
-      adminId,
-      adminEmail,
-      targetId: id,
-      targetType: 'User',
-      details: { reason: 'Discarded by admin' },
-    });
-  }
-
-  // ==================== ADMIN WARN ====================
-
-  async adminWarnUser(
-    userId: string,
-    message: string,
-    adminId: string,
-    adminEmail: string,
-  ): Promise<void> {
-    this.logger.log(`Admin sending warning to user: ${userId}`);
-    const user = await this.userModel.findById(userId).exec();
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-    await this.notificationModel.create({
-      recipientId: userId,
-      senderId: adminId,
-      senderName: adminEmail || 'admin',
-      adId: '-',
-      adTitle: '-',
-      type: 'admin_warning',
-      message: message || 'You have received a warning from admin.',
-      read: false,
-    });
-    if (this.auditLogsService) {
-      await this.auditLogsService.log({
-        action: 'USER_WARNED',
-        adminId,
-        adminEmail,
-        targetId: userId,
-        targetType: 'User',
-        details: { message },
-      });
-    }
-  }
-
   // ==================== PASSWORD CHANGE with OTP ====================
 
   private generateOTP(): string {
@@ -1113,51 +812,49 @@ export class UsersService {
 
   async sendPasswordChangeOTP(userId: string): Promise<any> {
     this.logger.log(`Sending password change OTP email for user: ${userId}`);
-
+    
     try {
+      // Validate userId - handle both string and ObjectId
       if (!userId) {
         throw new BadRequestException('User ID is required');
       }
-
+      
       const userIdStr = userId.toString();
       this.logger.debug(`Processing userId: ${userIdStr}`);
 
+      // Get full user document with all fields
       const user = await this.userModel.findById(userIdStr).exec();
       if (!user) {
         this.logger.warn(`User not found with ID: ${userIdStr}`);
         throw new NotFoundException('User not found');
       }
-
+      
       this.logger.debug(`User found: ${user.email}`);
-
+      this.logger.debug(`User email: ${user.email || 'NOT SET'}`);
+      
       if (!user.email) {
-        throw new BadRequestException(
-          'Registered email not found for this account.',
-        );
+        throw new BadRequestException('Registered email not found for this account.');
       }
 
       const otp = this.generateOTP();
-      const expiryTime = new Date(Date.now() + 5 * 60 * 1000);
+      const expiryTime = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
 
-      await this.userModel
-        .findByIdAndUpdate(
-          userIdStr,
-          {
-            $set: {
-              passwordChangeOTP: otp,
-              passwordChangeOTPExpiry: expiryTime,
-              passwordChangeOTPVerified: false,
-              updatedAt: new Date(),
-            },
-          },
-          { new: true },
-        )
-        .exec();
+      // Save OTP and reset verification status
+      await this.userModel.findByIdAndUpdate(
+        userIdStr,
+        {
+          $set: {
+            passwordChangeOTP: otp,
+            passwordChangeOTPExpiry: expiryTime,
+            passwordChangeOTPVerified: false,
+            updatedAt: new Date(),
+          }
+        },
+        { new: true }
+      ).exec();
 
       if (!this.mailTransporter || !this.mailFrom) {
-        throw new InternalServerErrorException(
-          'Email service not configured. Please contact support.',
-        );
+        throw new InternalServerErrorException('Email service not configured. Please contact support.');
       }
 
       await this.mailTransporter.sendMail({
@@ -1179,7 +876,7 @@ export class UsersService {
 
       return {
         message: 'OTP sent to your registered email address',
-        expiresIn: 300,
+        expiresIn: 300, // 5 minutes in seconds
       };
     } catch (error) {
       this.logger.error(`Error in sendPasswordChangeOTP: ${error.message}`);
@@ -1190,7 +887,7 @@ export class UsersService {
 
   async verifyPasswordChangeOTP(userId: string, otp: string): Promise<any> {
     this.logger.log(`Verifying password change OTP for user: ${userId}`);
-
+    
     const user = await this.userModel.findById(userId).exec();
     if (!user) {
       throw new NotFoundException('User not found');
@@ -1201,43 +898,37 @@ export class UsersService {
     }
 
     if (new Date() > user.passwordChangeOTPExpiry) {
-      throw new BadRequestException(
-        'OTP has expired. Please request a new one.',
-      );
+      throw new BadRequestException('OTP has expired. Please request a new one.');
     }
 
     if (user.passwordChangeOTP !== otp) {
       throw new UnauthorizedException('Invalid OTP');
     }
 
-    await this.userModel
-      .findByIdAndUpdate(userId, {
+    // Mark OTP as verified
+    await this.userModel.findByIdAndUpdate(
+      userId,
+      {
         $set: {
           passwordChangeOTPVerified: true,
           updatedAt: new Date(),
-        },
-      })
-      .exec();
+        }
+      }
+    ).exec();
 
     return { message: 'OTP verified successfully' };
   }
 
-  async changePasswordWithOTP(
-    userId: string,
-    otp: string,
-    newPassword: string,
-  ): Promise<UserResponseDto> {
+  async changePasswordWithOTP(userId: string, otp: string, newPassword: string): Promise<UserResponseDto> {
     this.logger.log(`Changing password with OTP for user: ${userId}`);
-
+    
     const user = await this.userModel.findById(userId).exec();
     if (!user) {
       throw new NotFoundException('User not found');
     }
 
     if (!user.passwordChangeOTPVerified) {
-      throw new BadRequestException(
-        'OTP not verified. Please verify OTP first.',
-      );
+      throw new BadRequestException('OTP not verified. Please verify OTP first.');
     }
 
     if (user.passwordChangeOTP !== otp) {
@@ -1245,56 +936,45 @@ export class UsersService {
     }
 
     if (new Date() > user.passwordChangeOTPExpiry) {
-      throw new BadRequestException(
-        'OTP has expired. Please request a new one.',
-      );
+      throw new BadRequestException('OTP has expired. Please request a new one.');
     }
 
     const isCurrentPassword = await bcrypt.compare(newPassword, user.password);
     if (isCurrentPassword) {
-      throw new BadRequestException(
-        'New password cannot be the same as your current password.',
-      );
+      throw new BadRequestException('New password cannot be the same as your current password.');
     }
 
-    const passwordHistory = Array.isArray(user.passwordHistory)
-      ? user.passwordHistory
-      : [];
+    const passwordHistory = Array.isArray(user.passwordHistory) ? user.passwordHistory : [];
     for (const oldPasswordHash of passwordHistory) {
-      const isReusedPassword = await bcrypt.compare(
-        newPassword,
-        oldPasswordHash,
-      );
+      const isReusedPassword = await bcrypt.compare(newPassword, oldPasswordHash);
       if (isReusedPassword) {
-        throw new BadRequestException(
-          'Previously used passwords are not allowed. Please choose a different password.',
-        );
+        throw new BadRequestException('Previously used passwords are not allowed. Please choose a different password.');
       }
     }
 
+    // Hash new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-    const updatedUser = await this.userModel
-      .findByIdAndUpdate(
-        userId,
-        {
-          $set: {
-            password: hashedPassword,
-            passwordChangeOTP: null,
-            passwordChangeOTPExpiry: null,
-            passwordChangeOTPVerified: false,
-            updatedAt: new Date(),
-          },
-          $push: {
-            passwordHistory: {
-              $each: [user.password],
-              $slice: -5,
-            },
+    // Update password and clear OTP
+    const updatedUser = await this.userModel.findByIdAndUpdate(
+      userId,
+      {
+        $set: {
+          password: hashedPassword,
+          passwordChangeOTP: null,
+          passwordChangeOTPExpiry: null,
+          passwordChangeOTPVerified: false,
+          updatedAt: new Date(),
+        },
+        $push: {
+          passwordHistory: {
+            $each: [user.password],
+            $slice: -5,
           },
         },
-        { new: true },
-      )
-      .exec();
+      },
+      { new: true }
+    ).exec();
 
     this.logger.log(`Password changed successfully for user: ${userId}`);
 
@@ -1303,12 +983,9 @@ export class UsersService {
 
   // ==================== WISHLIST METHODS ====================
 
-  async toggleWishlist(
-    userId: string,
-    adId: string,
-  ): Promise<{ wishlist: string[]; added: boolean }> {
+  async toggleWishlist(userId: string, adId: string): Promise<{ wishlist: string[], added: boolean }> {
     this.logger.log(`Toggling wishlist for user: ${userId}, ad: ${adId}`);
-
+    
     if (!adId) {
       throw new BadRequestException('Ad ID is required');
     }
@@ -1322,7 +999,7 @@ export class UsersService {
     let added = false;
 
     if (wishlist.includes(adId)) {
-      wishlist = wishlist.filter((id) => id !== adId);
+      wishlist = wishlist.filter(id => id !== adId);
     } else {
       wishlist.push(adId);
       added = true;
@@ -1330,6 +1007,7 @@ export class UsersService {
 
     await this.userModel.findByIdAndUpdate(userId, { wishlist }).exec();
 
+    // Create notification for the ad owner when someone adds to wishlist
     if (added && this.adsService) {
       try {
         const ad = await this.adsService.getAdById(adId);
@@ -1347,20 +1025,14 @@ export class UsersService {
           });
         }
       } catch (err) {
-        this.logger.warn(
-          `Failed to create wishlist notification: ${err.message}`,
-        );
+        this.logger.warn(`Failed to create wishlist notification: ${err.message}`);
       }
     }
 
     return { wishlist, added };
   }
 
-  async getNotifications(
-    userId: string,
-    page = 1,
-    limit = 20,
-  ): Promise<{ notifications: any[]; unreadCount: number }> {
+  async getNotifications(userId: string, page = 1, limit = 20): Promise<{ notifications: any[]; unreadCount: number }> {
     const skip = (page - 1) * limit;
     const [notifications, unreadCount] = await Promise.all([
       this.notificationModel
@@ -1370,33 +1042,23 @@ export class UsersService {
         .limit(limit)
         .lean()
         .exec(),
-      this.notificationModel.countDocuments({
-        recipientId: userId,
-        read: false,
-      }),
+      this.notificationModel.countDocuments({ recipientId: userId, read: false }),
     ]);
     return { notifications, unreadCount };
   }
 
-  async markNotificationRead(
-    notificationId: string,
-    userId: string,
-  ): Promise<void> {
-    await this.notificationModel
-      .findOneAndUpdate(
-        { _id: notificationId, recipientId: userId },
-        { $set: { read: true } },
-      )
-      .exec();
+  async markNotificationRead(notificationId: string, userId: string): Promise<void> {
+    await this.notificationModel.findOneAndUpdate(
+      { _id: notificationId, recipientId: userId },
+      { $set: { read: true } },
+    ).exec();
   }
 
   async markAllNotificationsRead(userId: string): Promise<void> {
-    await this.notificationModel
-      .updateMany(
-        { recipientId: userId, read: false },
-        { $set: { read: true } },
-      )
-      .exec();
+    await this.notificationModel.updateMany(
+      { recipientId: userId, read: false },
+      { $set: { read: true } },
+    ).exec();
   }
 
   async saveIWantPreference(
@@ -1420,8 +1082,7 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
-    const currentCreatedAt =
-      existingUser.iWantPreference?.createdAt || new Date();
+    const currentCreatedAt = existingUser.iWantPreference?.createdAt || new Date();
 
     const user = await this.userModel
       .findByIdAndUpdate(
@@ -1480,9 +1141,7 @@ export class UsersService {
         const ad = await this.adsService.getAdById(id);
         if (ad) ads.push(ad);
       } catch (error) {
-        this.logger.warn(
-          `Ad ${id} not found in wishlist context: ${error.message}`,
-        );
+        this.logger.warn(`Ad ${id} not found in wishlist context: ${error.message}`);
       }
     }
     return ads;
@@ -1505,7 +1164,7 @@ export class UsersService {
 
       const reportId = `REP-USR-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
 
-      await this.userReportModel.create({
+      const newReport = await this.userReportModel.create({
         reportId,
         reportedUserId,
         reportedBy: reporterUserId,
@@ -1516,9 +1175,7 @@ export class UsersService {
         priority: 0,
       });
 
-      this.logger.log(
-        `User report ${reportId} submitted by ${reporterUserId} against ${reportedUserId}`,
-      );
+      this.logger.log(`User report ${reportId} submitted by ${reporterUserId} against ${reportedUserId}`);
 
       return {
         reportId,
@@ -1542,6 +1199,7 @@ export class UsersService {
 
       const total = await this.userReportModel.countDocuments();
 
+      // Helper to map reason enum to label
       const reasonLabels: Record<string, string> = {
         harassment: 'Harassment',
         abuse: 'Abuse',
@@ -1552,29 +1210,20 @@ export class UsersService {
         other: 'Other',
       };
 
-      const userIds = Array.from(
-        new Set(
-          [
-            ...reports.map((r: any) => r.reportedUserId),
-            ...reports.map((r: any) => r.reportedBy),
-          ].filter(Boolean),
-        ),
-      );
+      // Fetch user names for reportedUserId and reportedBy
+      const userIds = Array.from(new Set([
+        ...reports.map((r: any) => r.reportedUserId),
+        ...reports.map((r: any) => r.reportedBy),
+      ].filter(Boolean)));
 
       const users = await this.userModel.find({ _id: { $in: userIds } }).lean();
-      const userMap = new Map(
-        users.map((u: any) => [u._id.toString(), u.name]),
-      );
+      const userMap = new Map(users.map((u: any) => [u._id.toString(), u.name]));
 
       const formattedReports = reports.map((report: any) => ({
         id: report._id?.toString() || '',
         reportId: report.reportId || '',
-        entity:
-          userMap.get(report.reportedUserId) ||
-          `User ${report.reportedUserId?.slice(0, 8)}...`,
-        by:
-          userMap.get(report.reportedBy) ||
-          `by ${report.reportedBy?.slice(0, 8) || 'Unknown User'}...`,
+        entity: userMap.get(report.reportedUserId) || `User ${report.reportedUserId?.slice(0, 8)}...`,
+        by: userMap.get(report.reportedBy) || `by ${report.reportedBy?.slice(0, 8) || 'Unknown User'}...`,
         type: reasonLabels[report.reason] || 'Other',
         priority: report.priority === 0 ? 'Medium' : 'High',
         status: report.status || 'Pending',
@@ -1629,16 +1278,9 @@ export class UsersService {
 
   // ==================== HELPER METHODS ====================
 
-  async getUsersByRole(
-    role: string,
-    page: number = 1,
-    limit: number = 10,
-    kycStatus?: string,
-  ): Promise<{ users: any[]; total: number }> {
-    this.logger.log(
-      `Getting users by role: ${role}, page: ${page}, limit: ${limit}, kycStatus: ${kycStatus}`,
-    );
-
+  async getUsersByRole(role: string, page: number = 1, limit: number = 10, kycStatus?: string): Promise<{ users: any[]; total: number }> {
+    this.logger.log(`Getting users by role: ${role}, page: ${page}, limit: ${limit}, kycStatus: ${kycStatus}`);
+    
     const query: any = { role };
     if (kycStatus) {
       query.kycStatus = kycStatus;
@@ -1670,13 +1312,7 @@ export class UsersService {
     };
   }
 
-  async updateUserKycStatus(
-    userId: string,
-    kycStatus: string,
-    rejectionReason?: string,
-    adminId?: string,
-    adminEmail?: string,
-  ): Promise<any> {
+  async updateUserKycStatus(userId: string, kycStatus: string, rejectionReason?: string, adminId?: string, adminEmail?: string): Promise<any> {
     this.logger.log(`Updating KYC status for user ${userId}: ${kycStatus}`);
 
     const user = await this.userModel.findById(userId);
@@ -1691,6 +1327,7 @@ export class UsersService {
 
     await user.save();
 
+    // Log audit if audit service available
     if (this.auditLogsService) {
       try {
         await this.auditLogsService.log({
@@ -1699,11 +1336,7 @@ export class UsersService {
           adminEmail: adminEmail || 'unknown',
           targetId: userId,
           targetType: 'User',
-          details: {
-            previousStatus: user.kycStatus,
-            newStatus: kycStatus,
-            rejectionReason,
-          },
+          details: { previousStatus: user.kycStatus, newStatus: kycStatus, rejectionReason },
         });
       } catch (err) {
         this.logger.warn(`Failed to log KYC update: ${err.message}`);
@@ -1719,16 +1352,10 @@ export class UsersService {
     };
   }
 
-  private toResponseDto(
-    user: UserDocument,
-    merchantProfile: any = null,
-  ): UserResponseDto {
-    const normalizedRole =
-      user.role === UserRole.ADMIN
-        ? UserRole.ADMIN
-        : user.accountType === 'merchant'
-          ? UserRole.MERCHANT
-          : user.role || UserRole.USER;
+  private toResponseDto(user: UserDocument, merchantProfile: any = null): UserResponseDto {
+    const normalizedRole = user.role === UserRole.ADMIN
+      ? UserRole.ADMIN
+      : (user.accountType === 'merchant' ? UserRole.MERCHANT : user.role || UserRole.USER);
 
     return {
       id: user._id.toString(),

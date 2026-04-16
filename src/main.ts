@@ -4,6 +4,7 @@ import { AppModule } from './app.module';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as dotenv from 'dotenv';
+import { json, urlencoded } from 'express';
 
 dotenv.config();
 
@@ -25,6 +26,15 @@ async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
   const kafkaEnabled = parseBoolean(process.env.ENABLE_KAFKA);
 
+  const app = await NestFactory.create(AppModule, { rawBody: true });
+  const configService = app.get(ConfigService);
+
+  // Allow larger payloads for banner image submissions (base64 data URLs).
+  app.use(json({ limit: '15mb' }));
+  app.use(urlencoded({ extended: true, limit: '15mb' }));
+
+  app.useGlobalPipes(validationPipe);
+
   if (kafkaEnabled) {
     const brokers = (process.env.KAFKA_BROKERS || '')
       .split(',')
@@ -37,32 +47,25 @@ async function bootstrap(): Promise<void> {
       );
     }
 
-    const microservice =
-      await NestFactory.createMicroservice<MicroserviceOptions>(AppModule, {
-        transport: Transport.KAFKA,
-        options: {
-          client: {
-            clientId: process.env.KAFKA_CLIENT_ID || 'golo-backend-server',
-            brokers,
-          },
-          consumer: {
-            groupId: process.env.KAFKA_GROUP_ID || 'golo-consumer-group-server',
-          },
-          producer: {
-            allowAutoTopicCreation: true,
-          },
+    app.connectMicroservice<MicroserviceOptions>({
+      transport: Transport.KAFKA,
+      options: {
+        client: {
+          clientId: process.env.KAFKA_CLIENT_ID || 'golo-backend',
+          brokers,
         },
-      });
+        consumer: {
+          groupId: process.env.KAFKA_GROUP_ID || 'golo-consumer-group',
+        },
+        producer: {
+          allowAutoTopicCreation: true,
+        },
+      },
+    });
 
-    microservice.useGlobalPipes(validationPipe);
-    await microservice.listen();
+    await app.startAllMicroservices();
     logger.log(`Kafka mode enabled. Brokers: ${brokers.join(', ')}`);
-    return;
   }
-
-  const app = await NestFactory.create(AppModule, { rawBody: true });
-  const configService = app.get(ConfigService);
-  app.useGlobalPipes(validationPipe);
 
   const corsOrigins = configService.get<string[]>('config.cors.origins') || [];
   app.enableCors({

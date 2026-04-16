@@ -17,7 +17,6 @@ import { CreateAdDto } from './dto/create-ad.dto';
 import { UpdateAdDto } from './dto/update-ad.dto';
 import { KafkaService } from '../kafka/kafka.service';
 import { KAFKA_TOPICS } from '../common/constants/kafka-topics';
-import { v4 as uuidv4 } from 'uuid';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import {
   Report,
@@ -27,6 +26,7 @@ import {
 } from './schemas/report.schema';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
+import { v4 as uuidv4 } from 'uuid';
 import { RedisService } from '../common/services/redis.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
@@ -361,6 +361,9 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
   async onModuleInit() {
     // Run once on startup, then schedule periodic checks
     this.logger.log('🕐 Starting ad expiry scheduler (runs every hour)');
+    if (this.kafkaService) {
+      this.logger.log('Kafka service connected for AdsService');
+    }
     await this.runExpiryCleanup();
     this.startExpiryScheduler();
   }

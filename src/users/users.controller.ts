@@ -1,17 +1,7 @@
-import {
-  Controller,
-  Post,
-  Body,
-  Get,
-  Put,
-  Delete,
-  Param,
-  UseGuards,
-  Query,
-  BadRequestException,
-  Logger,
+import { 
+  Controller, Post, Body, Get, Put, Delete, Param, 
+  UseGuards, Query, Ip, NotFoundException 
 } from '@nestjs/common';
-import { isValidObjectId } from 'mongoose';
 
 import { UsersService } from './users.service';
 import { RegisterDto } from './dto/register.dto';
@@ -24,174 +14,28 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { UserRole } from './schemas/user.schema';
-
-// ==================== INTERFACES ====================
-interface CurrentUserPayload {
-  id: string;
-  email: string;
-  role: string;
-  _id?: string;
-}
-
-interface UpdateManagerDto {
-  // Add properties if needed
-  [key: string]: unknown;
-}
-
-interface OtpBody {
-  otp: string;
-  newPassword?: string;
-}
-
-interface UpdateProfileDto {
-  [key: string]: unknown;
-}
-
-interface UserReportBody {
-  reason: string;
-  description?: string;
-  evidenceUrls?: string[];
-}
+import { RedisService } from '../common/services/redis.service';
 
 @Controller('users')
 export class UsersController {
-  private readonly logger = new Logger(UsersController.name);
 
-  constructor(private readonly usersService: UsersService) {}
-
-  // ==================== MANAGER ADMIN ====================
-  @Get('admin/managers')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
-  async adminGetAllManagers() {
-    return {
-      success: true,
-      data: await this.usersService.adminGetAllManagers(),
-    };
-  }
-
-  @Get('admin/service-providers')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
-  async adminGetAllServiceProviders(
-    @Query('page') page = '1',
-    @Query('limit') limit = '100',
-  ) {
-    const p = parseInt(String(page), 10) || 1;
-    const l = parseInt(String(limit), 10) || 100;
-    const result = await this.usersService.getUsersByRole(
-      UserRole.MERCHANT,
-      p,
-      l,
-    );
-    return { success: true, data: result.users, total: result.total };
-  }
-
-  @Post('admin/managers')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
-  async adminCreateManager(
-    @Body() dto: RegisterDto,
-    @CurrentUser() admin: CurrentUserPayload,
-  ) {
-    const manager = await this.usersService.adminCreateManager(
-      dto,
-      admin.id,
-      admin.email,
-    );
-    return { success: true, data: manager };
-  }
-
-  @Put('admin/managers/:id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
-  async adminUpdateManager(
-    @Param('id') id: string,
-    @Body() dto: UpdateManagerDto,
-    @CurrentUser() admin: CurrentUserPayload,
-  ) {
-    let rawId = String(id ?? '');
-    try {
-      rawId = decodeURIComponent(rawId);
-    } catch {
-      // ignore decode errors
-    }
-    rawId = rawId.trim().replace(/^\/+|\/+$/g, '');
-    this.logger.debug(
-      `adminUpdateManager called with rawId="${rawId}" (type=${typeof rawId}, len=${rawId.length})`,
-    );
-    if (!rawId || !isValidObjectId(rawId)) {
-      throw new BadRequestException('Invalid manager id');
-    }
-    const manager = await this.usersService.adminUpdateManager(
-      rawId,
-      dto,
-      admin.id,
-      admin.email,
-    );
-    return { success: true, data: manager };
-  }
-
-  @Delete('admin/managers/:id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
-  async adminDeleteManager(
-    @Param('id') id: string,
-    @CurrentUser() admin: CurrentUserPayload,
-  ) {
-    let rawId = String(id ?? '');
-    try {
-      rawId = decodeURIComponent(rawId);
-    } catch {
-      // ignore decode errors
-    }
-    rawId = rawId.trim().replace(/^\/+|\/+$/g, '');
-    this.logger.debug(
-      `adminDeleteManager called with rawId="${rawId}" (type=${typeof rawId}, len=${rawId.length})`,
-    );
-    if (!rawId || !isValidObjectId(rawId)) {
-      throw new BadRequestException('Invalid manager id');
-    }
-    await this.usersService.adminDeleteManager(rawId, admin.id, admin.email);
-    return { success: true };
-  }
-
-  @Post('admin/managers/:id/discard')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
-  async adminDiscardManager(
-    @Param('id') id: string,
-    @CurrentUser() admin: CurrentUserPayload,
-  ) {
-    let rawId = String(id ?? '');
-    try {
-      rawId = decodeURIComponent(rawId);
-    } catch {
-      // ignore decode errors
-    }
-    rawId = rawId.trim().replace(/^\/+|\/+$/g, '');
-    this.logger.debug(
-      `adminDiscardManager called with rawId="${rawId}" (type=${typeof rawId}, len=${rawId.length})`,
-    );
-    if (!rawId || !isValidObjectId(rawId)) {
-      throw new BadRequestException('Invalid manager id');
-    }
-    await this.usersService.adminDiscardManager(rawId, admin.id, admin.email);
-    return { success: true };
-  }
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly redisService: RedisService,
+  ) {}
 
   // ==================== USER REPORT ====================
   @Post(':id/report')
   @UseGuards(JwtAuthGuard)
   async reportUser(
     @Param('id') id: string,
-    @CurrentUser() reporter: CurrentUserPayload,
-    @Body() body: UserReportBody,
+    @CurrentUser() reporter: any,
+    @Body() body: { reason: string; description?: string; evidenceUrls?: string[] }
   ) {
     const { reason, description, evidenceUrls } = body;
-    const reporterId = reporter.id || reporter._id;
+    const reporterId = reporter?.id || reporter?._id;
     if (!reporterId) {
-      throw new BadRequestException('Authenticated user id not found');
+      throw new Error('Authenticated user id not found');
     }
     const result = await this.usersService.submitUserReport(
       id,
@@ -203,12 +47,26 @@ export class UsersController {
     return { success: true, ...result };
   }
 
+  // ==================== ADMIN SUSPEND/UNSUSPEND ====================
+  @Post('admin/users/:id/ban')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async banUser(
+    @Param('id') id: string,
+    @Body('reason') reason: string,
+    @Body('duration') duration: number,
+    @CurrentUser() admin: any,
+  ) {
+    const user = await this.usersService.banUser(id, reason, admin.id, admin.email, duration);
+    return { success: true, data: user };
+  }
+
   @Post('admin/users/:id/unban')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
   async unbanUser(
     @Param('id') id: string,
-    @CurrentUser() admin: CurrentUserPayload,
+    @CurrentUser() admin: any,
   ) {
     const user = await this.usersService.unbanUser(id, admin.id, admin.email);
     return { success: true, data: user };
@@ -216,166 +74,118 @@ export class UsersController {
 
   // ==================== PUBLIC ROUTES ====================
   @Post('register')
-  async register(@Body() dto: RegisterDto) {
+  async register(@Body() dto: RegisterDto, @Ip() ip: string) {
     const user = await this.usersService.register(dto);
-    return {
-      success: true,
-      message: 'User registered successfully',
-      data: user,
-    };
+    return { success: true, message: 'User registered successfully', data: user };
   }
 
   @Post('login')
-  async login(@Body() dto: LoginDto) {
-    const result = await this.usersService.login(dto);
+  async login(@Body() dto: LoginDto, @Ip() ip: string) {
+    const result = await this.usersService.login(dto, ip);
     return { success: true, message: 'Login successful', data: result };
   }
 
   @Post('social-auth')
-  async socialAuth(@Body() dto: SocialAuthDto) {
-    const result = await this.usersService.socialAuth(dto);
+  async socialAuth(@Body() dto: SocialAuthDto, @Ip() ip: string) {
+    const result = await this.usersService.socialAuth(dto, ip);
     return { success: true, message: 'Social login successful', data: result };
   }
 
   @Post('refresh')
   async refreshToken(@Body() dto: RefreshTokenDto) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const result = await this.usersService.refreshToken(dto.refreshToken);
     return { success: true, data: result };
   }
 
   @Get('dashboard/stats')
   async getDashboardStats() {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const cacheKey = 'golo:users:dashboard:stats';
+    const cached = await this.redisService.get<any>(cacheKey);
+    if (cached) {
+      return { success: true, data: cached, fromCache: true };
+    }
+
     const stats = await this.usersService.getDashboardStatsPublic();
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    await this.redisService.set(cacheKey, stats, 90);
     return { success: true, data: stats };
   }
 
   // ==================== USER ROUTES ====================
   @Post('logout')
   @UseGuards(JwtAuthGuard)
-  async logout(
-    @CurrentUser() user: CurrentUserPayload,
-    @Body() dto: RefreshTokenDto,
-  ) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+  async logout(@CurrentUser() user: any, @Body() dto: RefreshTokenDto) {
     await this.usersService.logout(user.id, dto.refreshToken);
     return { success: true, message: 'Logout successful' };
   }
 
   @Get('profile')
   @UseGuards(JwtAuthGuard)
-  async getProfile(@CurrentUser() user: CurrentUserPayload) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+  async getProfile(@CurrentUser() user: any) {
     const profile = await this.usersService.getProfile(user.id);
     return { success: true, data: profile };
   }
 
   @Get('merchant/profile')
   @UseGuards(JwtAuthGuard)
-  async getMerchantProfile(@CurrentUser() user: CurrentUserPayload) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+  async getMerchantProfile(@CurrentUser() user: any) {
     const data = await this.usersService.getMerchantProfile(user.id);
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     return { success: true, data };
   }
 
   @Put('profile')
   @UseGuards(JwtAuthGuard)
-  async updateProfile(
-    @CurrentUser() user: CurrentUserPayload,
-    @Body() data: UpdateProfileDto,
-  ) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+  async updateProfile(@CurrentUser() user: any, @Body() data: any) {
     const profile = await this.usersService.updateProfile(user.id, data);
-    return {
-      success: true,
-      message: 'Profile updated successfully',
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      data: profile,
-    };
+    return { success: true, message: 'Profile updated successfully', data: profile };
   }
 
   // ==================== PASSWORD OTP ====================
   @Post('send-password-otp')
   @UseGuards(JwtAuthGuard)
-  async sendOTP(@CurrentUser() user: CurrentUserPayload) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+  async sendOTP(@CurrentUser() user: any) {
     const result = await this.usersService.sendPasswordChangeOTP(user.id);
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     return { success: true, message: 'OTP sent', data: result };
   }
 
   @Post('verify-password-otp')
   @UseGuards(JwtAuthGuard)
-  async verifyOTP(
-    @CurrentUser() user: CurrentUserPayload,
-    @Body() body: OtpBody,
-  ) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const result = await this.usersService.verifyPasswordChangeOTP(
-      user.id,
-      body.otp,
-    );
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+  async verifyOTP(@CurrentUser() user: any, @Body() body: any) {
+    const result = await this.usersService.verifyPasswordChangeOTP(user.id, body.otp);
     return { success: true, message: 'OTP verified', data: result };
   }
 
   @Post('change-password-otp')
   @UseGuards(JwtAuthGuard)
-  async changePassword(
-    @CurrentUser() user: CurrentUserPayload,
-    @Body() body: OtpBody,
-  ) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const result = await this.usersService.changePasswordWithOTP(
-      user.id,
-      body.otp,
-      body.newPassword,
-    );
+  async changePassword(@CurrentUser() user: any, @Body() body: any) {
+    const result = await this.usersService.changePasswordWithOTP(user.id, body.otp, body.newPassword);
     return { success: true, message: 'Password changed', data: result };
   }
 
   // ==================== WISHLIST ====================
+
   @Get('wishlist')
   @UseGuards(JwtAuthGuard)
-  async getWishlist(@CurrentUser() user: CurrentUserPayload) {
-    return {
-      success: true,
-      data: await this.usersService.getWishlistAds(user.id),
-    };
+  async getWishlist(@CurrentUser() user: any) {
+    return { success: true, data: await this.usersService.getWishlistAds(user.id) };
   }
 
   @Get('wishlist/ids')
   @UseGuards(JwtAuthGuard)
-  async getWishlistIds(@CurrentUser() user: CurrentUserPayload) {
-    return {
-      success: true,
-      data: await this.usersService.getWishlistIds(user.id),
-    };
+  async getWishlistIds(@CurrentUser() user: any) {
+    return { success: true, data: await this.usersService.getWishlistIds(user.id) };
   }
 
   @Post('wishlist/:adId')
   @UseGuards(JwtAuthGuard)
-  async toggleWishlist(
-    @CurrentUser() user: CurrentUserPayload,
-    @Param('adId') adId: string,
-  ) {
-    return {
-      success: true,
-      data: await this.usersService.toggleWishlist(user.id, adId),
-    };
+  async toggleWishlist(@CurrentUser() user: any, @Param('adId') adId: string) {
+    return { success: true, data: await this.usersService.toggleWishlist(user.id, adId) };
   }
 
   // ==================== NOTIFICATIONS ====================
   @Get('notifications')
   @UseGuards(JwtAuthGuard)
-  async getNotifications(@CurrentUser() user: CurrentUserPayload) {
-    return {
-      success: true,
-      data: await this.usersService.getNotifications(user.id),
-    };
+  async getNotifications(@CurrentUser() user: any) {
+    return { success: true, data: await this.usersService.getNotifications(user.id) };
   }
 
   // ==================== ADMIN ====================
@@ -389,10 +199,7 @@ export class UsersController {
   @Delete('admin/users/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
-  async deleteUser(
-    @Param('id') id: string,
-    @CurrentUser() admin: CurrentUserPayload,
-  ) {
+  async deleteUser(@Param('id') id: string, @CurrentUser() admin: any) {
     await this.usersService.adminDeleteUser(id, admin.id, admin.email);
     return { success: true };
   }
