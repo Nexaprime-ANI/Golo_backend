@@ -6,10 +6,10 @@ stages:
   - sonarqube
   - test
   - deploy
+  - sync-to-github
 
 variables:
   NPM_CACHE_DIR: "$CI_PROJECT_DIR/.npm"
-  RUN_ONLY_SONAR: "true"   # 🔥 toggle here
 
 workflow:
   rules:
@@ -22,34 +22,37 @@ cache:
     - node_modules/
     - .npm/
 
-# ==================== LINT ====================
+# ==================== LINT STAGE ====================
 
 lint:
   stage: lint
   script:
+    - echo "Running ESLint..."
     - npm ci
     - npm run lint || true
+  artifacts:
+    paths:
+      - eslint-report.json
+    when: always
   rules:
-    - if: '$RUN_ONLY_SONAR == "true"'
-      when: never
-    - when: on_success
+    - if: "$CI_PIPELINE_SOURCE"
 
-# ==================== BUILD ====================
+# ==================== BUILD STAGE ====================
 
 build:
   stage: build
   script:
+    - echo "Building project..."
     - npm ci
     - npm run build
   artifacts:
     paths:
       - dist/
+    expire_in: 1 day
   rules:
-    - if: '$RUN_ONLY_SONAR == "true"'
-      when: never
-    - when: on_success
+    - if: "$CI_PIPELINE_SOURCE"
 
-# ==================== SONARQUBE ====================
+# ==================== SONARQUBE STAGE ====================
 
 sonarqube:
   stage: sonarqube
@@ -58,8 +61,8 @@ sonarqube:
     - echo "Running SonarQube analysis..."
     - |
       sonar-scanner \
-        -Dsonar.projectKey=golo-ads-service \
-        -Dsonar.projectName="GOLO Backend - ADS Service" \
+        -Dsonar.projectKey=nexaprime-ani_golo \
+        -Dsonar.projectName="GOLO" \
         -Dsonar.projectVersion=1.0.0 \
         -Dsonar.sources=src \
         -Dsonar.tests=src \
@@ -69,29 +72,59 @@ sonarqube:
         -Dsonar.coverage.exclusions=**/*.spec.ts,**/*.test.ts,src/main.ts \
         -Dsonar.organization=nexaprime-ani \
         -Dsonar.host.url=${SONAR_HOST_URL} \
-        -Dsonar.login=${SONAR_TOKEN}
-  allow_failure: true 
+        -Dsonar.token=${SONAR_TOKEN}
+  allow_failure: true
   rules:
-    - if: '$SONAR_HOST_URL && $SONAR_TOKEN'
-# ==================== TEST ====================
+    - if: '$CI_COMMIT_BRANCH == "main" && $SONAR_HOST_URL && $SONAR_TOKEN'
+
+# ==================== TEST STAGE ====================
 
 test:
   stage: test
   script:
+    - echo "Running tests..."
     - npm ci
-    - npm run test -- --passWithNoTests || true
+    - npm run test -- --passWithNoTests 2>&1 || true
   rules:
-    - if: '$RUN_ONLY_SONAR == "true"'
-      when: never
-    - when: on_success
+    - if: "$CI_PIPELINE_SOURCE"
 
-# ==================== DEPLOY ====================
+# ==================== STAGE HEALTH CHECK STAGE ====================
 
 staging-health-check:
   stage: deploy
   script:
-    - echo "Checking frontend..."
+    - echo "Checking frontend availability..."
+    - |
+      for i in {1..10}; do
+        if curl -f https://your-frontend.onrender.com; then
+          echo "Frontend is live ✅"
+          exit 0
+        fi
+        echo "Retrying..."
+        sleep 2
+      done
+
+      echo "Frontend failed health check ❌"
+      exit 1
   rules:
-    - if: '$RUN_ONLY_SONAR == "true"'
-      when: never
     - if: '$CI_COMMIT_BRANCH == "developer"'
+
+# ==================== PRODUCTION STAGE ====================
+
+github_mirror:
+  stage: sync-to-github
+  image: alpine:latest
+
+  before_script:
+    - apk add --no-cache git
+    - git config --global user.name "GitLab CI"
+    - git config --global user.email "ci@gitlab.com"
+
+  script:
+    - GITHUB_REPO_URL="https://NexaprimeGit:${GITHUB_TOKEN}@github.com/NexaprimeGit/wavenxd-website.git"
+    - git remote set-url github $GITHUB_REPO_URL || git remote add github $GITHUB_REPO_URL
+    - git fetch github
+    - git push -u github HEAD:main
+
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
