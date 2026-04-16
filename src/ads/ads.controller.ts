@@ -14,8 +14,9 @@ import {
   HttpCode,
   HttpStatus,
   UseGuards,
-  Request,
-} from '@nestjs/common';
+  Optional,
+} 
+from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -29,7 +30,6 @@ import { KAFKA_TOPICS } from '../common/constants/kafka-topics';
 import { KafkaService } from '../kafka/kafka.service';
 import { v4 as uuidv4 } from 'uuid';
 import { UserRole } from '../users/schemas/user.schema';
-import { Optional } from '@nestjs/common';
 
 @Controller('ads')
 export class AdsController {
