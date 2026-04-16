@@ -92,6 +92,7 @@ sonarqube:
 staging-health-check:
   stage: deploy
   script:
+    - apk add --no-cache curl
     - echo "Checking frontend availability..."
     - |
       for i in {1..10}; do
