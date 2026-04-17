@@ -107,7 +107,7 @@ staging-health-check:
       echo "Frontend failed health check ❌"
       exit 1
   rules:
-    - if: '$CI_COMMIT_BRANCH == "feature"'
+    - if: '$CI_COMMIT_BRANCH == "developer"'
 
 # # ==================== PRODUCTION STAGE ====================
 
