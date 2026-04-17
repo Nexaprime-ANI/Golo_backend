@@ -14,6 +14,7 @@ import { RedisModule } from './common/services/redis.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { MerchantProductsModule } from './merchant-products/merchant-products.module';
 import { BannersModule } from './banners/banners.module';
+import { MerchantsModule } from './merchants/merchants.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -54,6 +55,7 @@ const logger = new Logger('MongoDB');
     KafkaModule,
     AdsModule,
     UsersModule,
+    MerchantsModule,
     PaymentsModule,
     ChatsModule,
     CallsModule,
