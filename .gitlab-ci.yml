@@ -62,6 +62,28 @@ test:
   rules:
     - if: '$CI_COMMIT_BRANCH == "developer"'
 
+# ==================== STAGE HEALTH CHECK STAGE ====================
+
+staging-health-check:
+  stage: deploy
+  script:
+    - apk add --no-cache curl
+    - echo "Checking frontend availability..."
+    - |
+      for i in {1..10}; do
+        if curl -f  https://golo-backend-yj3n.onrender.com; then
+          echo "Backend is live ✅"
+          exit 0
+        fi
+        echo "Retrying..."
+        sleep 2
+      done
+
+      echo "Frontend failed health check ❌"
+      exit 1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "developer"'
+
 # ==================== SONARQUBE STAGE ====================
 
 sonarqube:
@@ -86,29 +108,6 @@ sonarqube:
   allow_failure: true
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" && $SONAR_HOST_URL && $SONAR_TOKEN'
-
-# ==================== STAGE HEALTH CHECK STAGE ====================
-
-staging-health-check:
-  stage: deploy
-  script:
-    - apk add --no-cache curl
-    - echo "Checking frontend availability..."
-    - |
-      for i in {1..10}; do
-        if curl -f  https://golo-backend-yj3n.onrender.com; then
-          echo "Backend is live ✅"
-          exit 0
-        fi
-        echo "Retrying..."
-        sleep 2
-      done
-
-      echo "Frontend failed health check ❌"
-      exit 1
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "developer"'
-
 # # ==================== PRODUCTION STAGE ====================
 
 # github_mirror:
