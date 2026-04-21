@@ -5,6 +5,7 @@ import { VouchersService } from './vouchers.service';
 import { Voucher, VoucherSchema } from './schemas/voucher.schema';
 import { BannerPromotion, BannerPromotionSchema } from '../banners/schemas/banner-promotion.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
+import { Merchant, MerchantSchema } from '../users/schemas/merchant.schema';
 import { KafkaModule } from '../kafka/kafka.module';
 import { VouchersKafkaController } from './vouchers.kafka.controller';
 
@@ -14,6 +15,7 @@ import { VouchersKafkaController } from './vouchers.kafka.controller';
       { name: Voucher.name, schema: VoucherSchema },
       { name: BannerPromotion.name, schema: BannerPromotionSchema },
       { name: User.name, schema: UserSchema },
+      { name: Merchant.name, schema: MerchantSchema },
     ]),
     forwardRef(() => KafkaModule),
   ],

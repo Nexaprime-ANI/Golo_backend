@@ -9,6 +9,7 @@ import {
   BannerPromotionType,
 } from '../banners/schemas/banner-promotion.schema';
 import { UserDocument } from '../users/schemas/user.schema';
+import { MerchantDocument } from '../users/schemas/merchant.schema';
 
 @Injectable()
 export class VouchersService implements OnModuleInit {
@@ -26,6 +27,7 @@ export class VouchersService implements OnModuleInit {
     @InjectModel('BannerPromotion')
     private bannerModel: Model<BannerPromotionDocument>,
     @InjectModel('User') private userModel: Model<UserDocument>,
+    @InjectModel('Merchant') private merchantModel: Model<MerchantDocument>,
   ) {}
 
   async onModuleInit() {
@@ -110,6 +112,61 @@ export class VouchersService implements OnModuleInit {
   private generateVerificationCode(): string {
     // Default: 3 groups of 4 chars with '-' separator
     return this.generateCode(3, 4, '-');
+  }
+
+  private async assertVoucherBelongsToMerchant(
+    voucher: VoucherDocument,
+    merchantId?: string,
+  ): Promise<void> {
+    if (!merchantId) {
+      throw new BadRequestException('Merchant ID is required');
+    }
+
+    const currentMerchantId = String(merchantId);
+    const allowedMerchantIds = new Set<string>([currentMerchantId]);
+
+    // Legacy support: some old voucher rows may have merchant profile _id
+    // instead of user id in merchantId.
+    const merchantProfile = await this.merchantModel
+      .findOne({ userId: currentMerchantId })
+      .select('_id')
+      .lean()
+      .exec();
+
+    if (merchantProfile?._id) {
+      allowedMerchantIds.add(String(merchantProfile._id));
+    }
+
+    const offer = await this.bannerModel
+      .findById(voucher.offerId)
+      .select('merchantId')
+      .lean()
+      .exec();
+
+    const offerMerchantId = String(offer?.merchantId || '');
+    if (offerMerchantId) {
+      allowedMerchantIds.add(offerMerchantId);
+    }
+
+    const voucherMerchantId = String(voucher.merchantId);
+    if (allowedMerchantIds.has(voucherMerchantId)) {
+      return;
+    }
+
+    // Self-heal legacy rows where voucher merchantId drifted from offer owner.
+    if (offerMerchantId && allowedMerchantIds.has(offerMerchantId)) {
+      try {
+        voucher.merchantId = new Types.ObjectId(offerMerchantId);
+        await voucher.save();
+        return;
+      } catch {
+        // Ignore migration failures and fall through to forbidden response.
+      }
+    }
+
+    if (!allowedMerchantIds.has(voucherMerchantId)) {
+      throw new ForbiddenException('This voucher belongs to another merchant');
+    }
   }
 
   private isLikelyOffer(offer: {
@@ -224,14 +281,13 @@ export class VouchersService implements OnModuleInit {
    */
   async generateVerificationCodeForVoucher(voucherId: string, merchantId: string) {
     try {
-      const voucher = await this.voucherModel.findOne({
-        voucherId,
-        merchantId: new Types.ObjectId(merchantId),
-      });
+      const voucher = await this.voucherModel.findOne({ voucherId });
 
       if (!voucher) {
         throw new NotFoundException('Voucher not found');
       }
+
+      await this.assertVoucherBelongsToMerchant(voucher, merchantId);
 
       // If verification code already exists, return it
       if (voucher.verificationCode) {
@@ -470,6 +526,8 @@ export class VouchersService implements OnModuleInit {
         throw new BadRequestException('Invalid verification code');
       }
 
+      await this.assertVoucherBelongsToMerchant(voucher, merchantId);
+
       console.log(`[verifyVoucherByCode] Voucher: ${voucher.voucherId}`);
 
       // Check if already redeemed
@@ -519,7 +577,7 @@ export class VouchersService implements OnModuleInit {
       console.error(`[verifyVoucherByCode] Error:`, error);
       this.logger.error(`Error verifying voucher by code: ${error.message}`, error.stack);
       
-      if (error instanceof BadRequestException) {
+      if (error instanceof BadRequestException || error instanceof ForbiddenException) {
         throw error;
       }
       
@@ -542,6 +600,8 @@ export class VouchersService implements OnModuleInit {
         console.log(`[verifyVoucher] Voucher not found with voucherId: ${voucherId}`);
         throw new BadRequestException('Voucher not found');
       }
+
+      await this.assertVoucherBelongsToMerchant(voucher, merchantId);
 
       console.log(`[verifyVoucher] Voucher QR code in DB: ${voucher.qrCode}`);
       console.log(`[verifyVoucher] Scanned QR code: ${qrCode}`);
@@ -604,7 +664,7 @@ export class VouchersService implements OnModuleInit {
       this.logger.error(`Error verifying voucher: ${error.message}`, error.stack);
 
       // If it's already a BadRequestException or other NestJS exception, re-throw it
-      if (error instanceof BadRequestException) {
+      if (error instanceof BadRequestException || error instanceof ForbiddenException) {
         throw error;
       }
 
@@ -646,6 +706,8 @@ export class VouchersService implements OnModuleInit {
       if (!voucher) {
         throw new BadRequestException('Voucher not found');
       }
+
+      await this.assertVoucherBelongsToMerchant(voucher, actualMerchantId);
 
       // Verify using the provided method
       if (actualQrCode) {
@@ -695,6 +757,9 @@ export class VouchersService implements OnModuleInit {
       };
     } catch (error) {
       this.logger.error(`Error redeeming voucher: ${error.message}`);
+      if (error instanceof BadRequestException || error instanceof ForbiddenException) {
+        throw error;
+      }
       throw error;
     }
   }
