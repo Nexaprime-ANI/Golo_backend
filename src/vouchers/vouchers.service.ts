@@ -114,6 +114,24 @@ export class VouchersService implements OnModuleInit {
     return this.generateCode(3, 4, '-');
   }
 
+  private async generateUniqueVerificationCode(): Promise<string> {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const verificationCode = this.generateVerificationCode();
+      const existingVoucher = await this.voucherModel
+        .exists({ verificationCode })
+        .lean()
+        .exec();
+
+      if (!existingVoucher) {
+        return verificationCode;
+      }
+    }
+
+    throw new InternalServerErrorException(
+      'Unable to generate a unique verification code',
+    );
+  }
+
   private async assertVoucherBelongsToMerchant(
     voucher: VoucherDocument,
     merchantId?: string,
@@ -230,6 +248,8 @@ export class VouchersService implements OnModuleInit {
         quality: 0.92,
       });
 
+      const verificationCode = await this.generateUniqueVerificationCode();
+
       // Calculate expiry (30 days from now)
       const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
@@ -239,6 +259,8 @@ export class VouchersService implements OnModuleInit {
         offerId: new Types.ObjectId(offerId),
         voucherId,
         qrCode,
+        verificationCode,
+        qrImage,
         merchantId: offer.merchantId, // From banner/offer
         offerTitle: offer.bannerTitle,
         merchantName: offer.merchantName,
@@ -259,10 +281,11 @@ export class VouchersService implements OnModuleInit {
           _id: voucher._id,
           voucherId: voucher.voucherId,
           qrCode: voucher.qrCode,
-          verificationCode: null, // Will be generated on-demand
+          verificationCode,
           qrImage, // Data URL for display
           offerTitle: voucher.offerTitle,
           merchantName: voucher.merchantName,
+          merchantId: voucher.merchantId,
           discount: voucher.discount,
           status: voucher.status,
           expiresAt: voucher.expiresAt,
@@ -301,7 +324,7 @@ export class VouchersService implements OnModuleInit {
       }
 
       // Generate new verification code
-      const verificationCode = this.generateVerificationCode();
+      const verificationCode = await this.generateUniqueVerificationCode();
       voucher.verificationCode = verificationCode;
       await voucher.save();
 
@@ -388,18 +411,24 @@ export class VouchersService implements OnModuleInit {
         throw new ForbiddenException('You do not have access to this voucher');
       }
 
-      // Generate verification code on first voucher load so the claimed-offer page can show it immediately
+      // Backfill verification code only for legacy vouchers that do not have one yet.
       if (!voucher.verificationCode) {
-        voucher.verificationCode = this.generateVerificationCode();
+        voucher.verificationCode = await this.generateUniqueVerificationCode();
         await voucher.save();
       }
 
-      // Generate fresh QR image with optimized settings
-      const qrImage = await QRCode.toDataURL(voucher.qrCode, {
-        width: 200,
-        margin: 1,
-        errorCorrectionLevel: 'M',
-      });
+      let qrImage = voucher.qrImage;
+
+      // Backfill qrImage only for legacy vouchers that predate stored QR payloads.
+      if (!qrImage) {
+        qrImage = await QRCode.toDataURL(voucher.qrCode, {
+          width: 200,
+          margin: 1,
+          errorCorrectionLevel: 'M',
+        });
+        voucher.qrImage = qrImage;
+        await voucher.save();
+      }
 
       return {
         success: true,
@@ -412,6 +441,31 @@ export class VouchersService implements OnModuleInit {
       this.logger.error(`Error fetching voucher: ${error.message}`);
       throw error;
     }
+  }
+
+  async getPublicVoucherStatus(voucherId: string) {
+    let voucher;
+
+    if (/^[0-9a-fA-F]{24}$/.test(voucherId)) {
+      voucher = await this.voucherModel.findById(voucherId).lean().exec();
+    } else {
+      voucher = await this.voucherModel.findOne({ voucherId }).lean().exec();
+    }
+
+    if (!voucher) {
+      throw new NotFoundException('Voucher not found');
+    }
+
+    return {
+      success: true,
+      data: {
+        _id: String(voucher._id),
+        voucherId: voucher.voucherId,
+        status: voucher.status,
+        redeemedAt: voucher.redeemedAt || null,
+        expiresAt: voucher.expiresAt || null,
+      },
+    };
   }
 
   /**
@@ -440,12 +494,17 @@ export class VouchersService implements OnModuleInit {
         throw new ForbiddenException('You do not have access to this voucher');
       }
 
-      // Generate QR image with optimized settings for faster generation
-      const qrImage = await QRCode.toDataURL(voucher.qrCode, {
-        width: 250,
-        margin: 1,
-        errorCorrectionLevel: 'M',
-      });
+      let qrImage = voucher.qrImage;
+
+      if (!qrImage) {
+        qrImage = await QRCode.toDataURL(voucher.qrCode, {
+          width: 250,
+          margin: 1,
+          errorCorrectionLevel: 'M',
+        });
+        voucher.qrImage = qrImage;
+        await voucher.save();
+      }
 
       return {
         success: true,

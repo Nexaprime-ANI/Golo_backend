@@ -112,6 +112,22 @@ export class BannersService implements OnModuleInit {
     return `golo:banners:active:${limit}`;
   }
 
+  private normalizeDateStrings(dateStrings: string[] = []): Date[] {
+    return Array.from(new Set(dateStrings))
+      .map((dateStr) => {
+        const parsed = new Date(dateStr);
+        if (Number.isNaN(parsed.getTime())) {
+          return null;
+        }
+
+        const normalized = new Date(parsed);
+        normalized.setHours(0, 0, 0, 0);
+        return normalized;
+      })
+      .filter((date): date is Date => date !== null)
+      .sort((a, b) => a.getTime() - b.getTime());
+  }
+
   private offerTemplateCacheKey(merchantId: string): string {
     return `golo:banners:template:${merchantId}`;
   }
@@ -206,16 +222,7 @@ export class BannersService implements OnModuleInit {
       );
     }
 
-    const normalizedDates = Array.from(
-      new Set(
-        (payload.selectedDates || []).map(
-          (dateStr) => new Date(dateStr).toISOString().split('T')[0],
-        ),
-      ),
-    )
-      .map((dateStr) => new Date(dateStr))
-      .filter((date) => !Number.isNaN(date.getTime()))
-      .sort((a, b) => a.getTime() - b.getTime());
+    const normalizedDates = this.normalizeDateStrings(payload.selectedDates || []);
 
     if (!normalizedDates.length) {
       throw new BadRequestException(
@@ -254,6 +261,7 @@ export class BannersService implements OnModuleInit {
       merchantEmail: merchant.email || '-',
       bannerTitle: payload.bannerTitle?.trim(),
       bannerCategory: payload.bannerCategory?.trim(),
+      description: payload.description?.trim() || '',
       promotionType,
       imageUrl: payload.imageUrl,
       recommendedSize: payload.recommendedSize || '1920 x 520 px',
@@ -440,6 +448,9 @@ export class BannersService implements OnModuleInit {
     if (payload.bannerCategory !== undefined) {
       request.bannerCategory = payload.bannerCategory.trim();
     }
+    if (payload.description !== undefined) {
+      request.description = payload.description.trim();
+    }
     if (payload.imageUrl !== undefined) {
       request.imageUrl = payload.imageUrl;
     }
@@ -487,16 +498,7 @@ export class BannersService implements OnModuleInit {
     }
 
     if (Array.isArray(payload.selectedDates) && payload.selectedDates.length) {
-      const normalizedDates = Array.from(
-        new Set(
-          payload.selectedDates.map(
-            (dateStr) => new Date(dateStr).toISOString().split('T')[0],
-          ),
-        ),
-      )
-        .map((dateStr) => new Date(dateStr))
-        .filter((date) => !Number.isNaN(date.getTime()))
-        .sort((a, b) => a.getTime() - b.getTime());
+      const normalizedDates = this.normalizeDateStrings(payload.selectedDates);
 
       if (!normalizedDates.length) {
         throw new BadRequestException('Please provide valid selectedDates');

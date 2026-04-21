@@ -431,7 +431,7 @@ export class UsersService implements OnModuleInit {
 
   async updateProfile(userId: string, updateData: any): Promise<UserResponseDto> {
     this.logger.log(`Updating profile for user: ${userId}`);
-    this.logger.debug(`Update data received: ${JSON.stringify(updateData)}`);
+    this.logger.debug(`Update data received: ${JSON.stringify(updateData).substring(0, 200)}...`);
     
     // Check if email is being changed and if it's already taken
     if (updateData.email) {
@@ -446,11 +446,25 @@ export class UsersService implements OnModuleInit {
       }
     }
     
+    // Validate profile photo size (max 2MB)
+    if (updateData.profilePhoto) {
+      const photoSize = Buffer.byteLength(updateData.profilePhoto, 'utf8');
+      const maxSizeMB = 2;
+      const maxSizeBytes = maxSizeMB * 1024 * 1024;
+      
+      if (photoSize > maxSizeBytes) {
+        this.logger.warn(`Profile photo too large: ${(photoSize / 1024 / 1024).toFixed(2)}MB`);
+        throw new BadRequestException(`Profile photo must be less than ${maxSizeMB}MB. Current size: ${(photoSize / 1024 / 1024).toFixed(2)}MB`);
+      }
+      this.logger.debug(`Profile photo size: ${(photoSize / 1024).toFixed(2)}KB - OK`);
+    }
+    
     // Only allow updating specific fields
     const allowedUpdates: any = {};
     
     if (updateData.name) allowedUpdates.name = updateData.name;
     if (updateData.email) allowedUpdates.email = updateData.email;
+    if (updateData.profilePhoto) allowedUpdates.profilePhoto = updateData.profilePhoto;
     if (updateData.profile?.phone) allowedUpdates['profile.phone'] = updateData.profile.phone;
     if (updateData.profile?.address) allowedUpdates['profile.address'] = updateData.profile.address;
     if (updateData.profile?.city) allowedUpdates['profile.city'] = updateData.profile.city;
@@ -458,8 +472,11 @@ export class UsersService implements OnModuleInit {
     if (updateData.profile?.pincode) allowedUpdates['profile.pincode'] = updateData.profile.pincode;
     if (updateData.profile?.avatar) allowedUpdates['profile.avatar'] = updateData.profile.avatar;
     if (updateData.profile?.bio) allowedUpdates['profile.bio'] = updateData.profile.bio;
+    if (updateData.profile?.interests && Array.isArray(updateData.profile.interests)) {
+      allowedUpdates['profile.interests'] = updateData.profile.interests;
+    }
 
-    this.logger.debug(`Allowed updates: ${JSON.stringify(allowedUpdates)}`);
+    this.logger.debug(`Updates to apply: ${JSON.stringify(Object.keys(allowedUpdates))}`);
 
     const user = await this.userModel.findByIdAndUpdate(
       userId,
@@ -471,6 +488,9 @@ export class UsersService implements OnModuleInit {
       throw new NotFoundException('User not found');
     }
 
+    this.logger.log(`Profile updated successfully for user: ${userId}`);
+    this.logger.debug(`Updated fields: ${JSON.stringify(Object.keys(allowedUpdates))}`);
+    
     return this.toResponseDto(user);
   }
 
@@ -1367,6 +1387,7 @@ export class UsersService implements OnModuleInit {
       banReason: user.banReason,
       isEmailVerified: user.isEmailVerified || false,
       profile: user.profile || {},
+      profilePhoto: user.profilePhoto || null,
       merchantProfile,
       iWantPreference: user.iWantPreference || null,
       createdAt: user.createdAt,

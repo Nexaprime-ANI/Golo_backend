@@ -54,6 +54,10 @@ export class SubmitBannerPromotionDto {
   bannerCategory: string;
 
   @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
   @IsEnum(PromotionTypeDto)
   promotionType?: PromotionTypeDto;
 

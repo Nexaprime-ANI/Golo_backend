@@ -41,6 +41,9 @@ export class BannerPromotion {
   @Prop({ required: true })
   bannerCategory: string;
 
+  @Prop({ default: '' })
+  description: string;
+
   @Prop({ enum: BannerPromotionType, default: BannerPromotionType.BANNER, index: true })
   promotionType: BannerPromotionType;
 

@@ -135,8 +135,33 @@ export class UsersController {
   @Put('profile')
   @UseGuards(JwtAuthGuard)
   async updateProfile(@CurrentUser() user: any, @Body() data: any) {
-    const profile = await this.usersService.updateProfile(user.id, data);
-    return { success: true, message: 'Profile updated successfully', data: profile };
+    try {
+      console.log(`[Controller] Updating profile for user ${user.id} with data:`, {
+        hasName: !!data.name,
+        hasEmail: !!data.email,
+        hasProfilePhoto: !!data.profilePhoto,
+        photoSize: data.profilePhoto ? 
+          (Buffer.byteLength(data.profilePhoto, 'utf8') / 1024 / 1024).toFixed(2) + "MB" : 
+          "N/A",
+        hasInterests: !!data.profile?.interests,
+      });
+      
+      const profile = await this.usersService.updateProfile(user.id, data);
+      
+      console.log(`[Controller] Profile updated successfully:`, {
+        hasPhoto: !!profile.profilePhoto,
+        interests: profile.profile?.interests?.length || 0,
+      });
+      
+      return { 
+        success: true, 
+        message: 'Profile updated successfully', 
+        data: profile 
+      };
+    } catch (error) {
+      console.error(`[Controller] Error updating profile:`, error.message);
+      throw error;
+    }
   }
 
   // ==================== PASSWORD OTP ====================
@@ -223,7 +248,6 @@ export class UsersController {
 
   // ==================== DYNAMIC ====================
   @Get(':id')
-  @UseGuards(JwtAuthGuard)
   async getUser(@Param('id') id: string) {
     return { success: true, data: await this.usersService.getUserById(id) };
   }
