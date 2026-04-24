@@ -240,6 +240,7 @@ export class OffersService implements OnModuleInit {
 
     const requestDocument = {
       requestId: uuidv4(),
+      idempotencyKey: uuidv4(),
       merchantId,
       merchantName: merchant.name || 'Merchant',
       merchantEmail: merchant.email || '-',
