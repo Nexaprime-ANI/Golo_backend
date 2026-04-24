@@ -15,6 +15,32 @@ export class OffersService implements OnModuleInit {
   private readonly logger = new Logger(OffersService.name);
   private staleOfferIndexRecoveryAttempted = false;
 
+  private isAllowedUniqueOfferIndex(indexDef: any): boolean {
+    const name = String(indexDef?.name || '');
+    if (name === '_id_') return true;
+
+    const key = indexDef?.key || {};
+    const keyNames = Object.keys(key);
+    return keyNames.length === 1 && keyNames[0] === 'requestId';
+  }
+
+  private async cleanupUnexpectedUniqueOfferIndexes(trigger: string): Promise<number> {
+    const indexes = await this.offerModel.collection.indexes();
+    const staleUniqueIndexes = indexes.filter((idx: any) => {
+      if (!idx?.unique) return false;
+      return !this.isAllowedUniqueOfferIndex(idx);
+    });
+
+    for (const indexDef of staleUniqueIndexes) {
+      const indexName = indexDef?.name;
+      if (!indexName) continue;
+      await this.offerModel.collection.dropIndex(indexName);
+      this.logger.warn(`[Offers] Dropped unexpected unique index (${trigger}): ${indexName}`);
+    }
+
+    return staleUniqueIndexes.length;
+  }
+
   constructor(
     @InjectModel(OfferPromotion.name) private readonly offerModel: Model<OfferPromotionDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
@@ -149,18 +175,7 @@ export class OffersService implements OnModuleInit {
 
   async onModuleInit() {
     try {
-      const indexes = await this.offerModel.collection.indexes();
-      const staleIdempotencyIndexes = indexes.filter((idx: any) => {
-        const keys = Object.keys(idx?.key || {});
-        return keys.includes('idempotencyKey');
-      });
-
-      for (const indexDef of staleIdempotencyIndexes) {
-        const indexName = indexDef?.name;
-        if (!indexName) continue;
-        await this.offerModel.collection.dropIndex(indexName);
-        this.logger.warn(`[Offers] Dropped legacy index on startup: ${indexName}`);
-      }
+      await this.cleanupUnexpectedUniqueOfferIndexes('startup');
     } catch (error) {
       this.logger.warn(`[Offers] Index cleanup skipped: ${error?.message || 'unknown error'}`);
     }
@@ -173,27 +188,11 @@ export class OffersService implements OnModuleInit {
     const isDuplicate = Number(error?.code) === 11000 || /E11000/i.test(message);
     if (!isDuplicate) return false;
 
-    // Some deployments still contain a legacy unique index on idempotencyKey,
-    // which rejects inserts where that field is absent/null.
-    const mentionsStaleIndex = /idempotencyKey/i.test(message) || /dup key/i.test(message);
-    if (!mentionsStaleIndex) return false;
-
     this.staleOfferIndexRecoveryAttempted = true;
 
     try {
-      const indexes = await this.offerModel.collection.indexes();
-      const staleIndexes = indexes.filter((idx: any) =>
-        Object.prototype.hasOwnProperty.call(idx?.key || {}, 'idempotencyKey'),
-      );
-
-      for (const indexDef of staleIndexes) {
-        const indexName = indexDef?.name;
-        if (!indexName) continue;
-        await this.offerModel.collection.dropIndex(indexName);
-        this.logger.warn(`[Offers] Dropped stale duplicate-causing index during write: ${indexName}`);
-      }
-
-      return staleIndexes.length > 0;
+      const dropped = await this.cleanupUnexpectedUniqueOfferIndexes('duplicate-recovery');
+      return dropped > 0;
     } catch (dropError) {
       this.logger.error(`[Offers] Failed to recover stale index: ${dropError?.message || 'unknown error'}`);
       return false;
