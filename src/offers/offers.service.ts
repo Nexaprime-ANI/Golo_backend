@@ -5,8 +5,6 @@ import { v4 as uuidv4 } from 'uuid';
 import { KafkaService } from '../kafka/kafka.service';
 import { RedisService } from '../common/services/redis.service';
 import { OfferPromotion, OfferPromotionDocument, OfferPromotionStatus, OfferPaymentStatus } from './schemas/offer-promotion.schema';
-import { OfferLikeHistory, OfferLikeHistoryDocument } from './schemas/offer-like-history.schema';
-import { MerchantProduct, MerchantProductDocument } from '../merchant-products/schemas/merchant-product.schema';
 // Banner models removed to keep offers module independent from banners
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { Merchant, MerchantDocument } from '../users/schemas/merchant.schema';
@@ -18,49 +16,11 @@ export class OffersService implements OnModuleInit {
 
   constructor(
     @InjectModel(OfferPromotion.name) private readonly offerModel: Model<OfferPromotionDocument>,
-    @InjectModel(OfferLikeHistory.name) private readonly offerLikeHistoryModel: Model<OfferLikeHistoryDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     @InjectModel(Merchant.name) private readonly merchantModel: Model<MerchantDocument>,
-    @InjectModel(MerchantProduct.name) private readonly merchantProductModel: Model<MerchantProductDocument>,
     private readonly redisService: RedisService,
     @Optional() private readonly kafkaService?: KafkaService,
   ) {}
-
-  /**
-   * Enrich selectedProducts with live stockQuantity from the merchant_products collection.
-   * Falls back to the snapshot value if the product is not found.
-   */
-  private async enrichWithLiveStock(selectedProducts: any[]): Promise<any[]> {
-    if (!selectedProducts.length) return selectedProducts;
-
-    const productIds = selectedProducts
-      .map((p) => p?.productId)
-      .filter((id) => id && isValidObjectId(id));
-
-    if (!productIds.length) return selectedProducts;
-
-    try {
-      const liveProducts = await this.merchantProductModel
-        .find({ _id: { $in: productIds } })
-        .select('_id stockQuantity status')
-        .lean()
-        .exec();
-
-      const liveMap = new Map(liveProducts.map((p) => [String(p._id), p]));
-
-      return selectedProducts.map((sp) => {
-        const live = liveMap.get(String(sp?.productId));
-        if (!live) return sp;
-        return {
-          ...sp,
-          stockQuantity: live.stockQuantity ?? sp.stockQuantity ?? 0,
-        };
-      });
-    } catch (err) {
-      this.logger.warn(`Failed to enrich live stock: ${err?.message}`);
-      return selectedProducts;
-    }
-  }
 
   private offerMerchantCacheKey(merchantId: string) {
     return `golo:offers:merchant:${merchantId}`;
@@ -323,10 +283,7 @@ export class OffersService implements OnModuleInit {
       .exec();
 
     const rowAny: any = row;
-    const rawSelectedProducts: any[] = Array.isArray(rowAny.selectedProducts) ? rowAny.selectedProducts : [];
-
-    // Enrich with live stock data from merchant_products collection
-    const selectedProducts = await this.enrichWithLiveStock(rawSelectedProducts);
+    const selectedProducts: any[] = Array.isArray(rowAny.selectedProducts) ? rowAny.selectedProducts : [];
 
     const computedBestDiscountPercent = selectedProducts.reduce((best, product) => {
       const original = Number(product?.originalPrice || 0);
@@ -345,18 +302,6 @@ export class OffersService implements OnModuleInit {
 
     const startsAt = row.startDate || row.selectedDates?.[0] || null;
     const endsAt = row.endDate || (Array.isArray(row.selectedDates) ? row.selectedDates[row.selectedDates.length - 1] : null) || null;
-
-    // Compute a fresh dynamic expiry text from the live endsAt date
-    let dynamicExpiryText = '';
-    if (endsAt) {
-      const diffMs = new Date(endsAt).getTime() - Date.now();
-      if (diffMs <= 0) {
-        dynamicExpiryText = 'Offer has expired';
-      } else {
-        const daysLeft = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-        dynamicExpiryText = daysLeft === 1 ? 'Offer ends in 1 day' : `Offer ends in ${daysLeft} days`;
-      }
-    }
 
     const normalized = {
       offerId: String(row._id),
@@ -383,10 +328,7 @@ export class OffersService implements OnModuleInit {
       },
       selectedProducts,
       createdAt: rowAny.createdAt,
-      // description is the merchant-authored text only — NOT the stale snapshot expiryText
-      description: rowAny.description || '',
-      // Fresh dynamic expiry text computed from live endsAt on every request
-      promotionExpiryText: dynamicExpiryText,
+      description: rowAny.description || rowAny.promotionExpiryText || '',
       exampleUsage: rowAny.exampleUsage || '',
       termsAndConditions: rowAny.termsAndConditions || '',
     };
@@ -674,109 +616,5 @@ export class OffersService implements OnModuleInit {
     const data = normalized.slice(start, start + safeLimit);
 
     return { data, pagination: { page: safePage, limit: safeLimit, total, pages } };
-  }
-
-  async getMerchantLikedProducts(merchantId: string, limit = 10) {
-    const safeLimit = Math.min(50, Math.max(1, Number(limit) || 10));
-
-    const likes = await this.offerLikeHistoryModel
-      .find({ merchantId: String(merchantId) })
-      .sort({ firstLikedAt: -1 })
-      .lean()
-      .exec();
-
-    if (!likes.length) {
-      return { offers: [], products: [] };
-    }
-
-    const offerMap = new Map<string, any>();
-    for (const row of likes) {
-      const offerKey = String((row as any).offerPublicId || (row as any).offerRequestId || '');
-      if (!offerKey) continue;
-
-      if (!offerMap.has(offerKey)) {
-        offerMap.set(offerKey, {
-          offerId: offerKey,
-          requestId: String((row as any).offerRequestId || ''),
-          name: String((row as any).offerTitle || 'Untitled Offer'),
-          type: String((row as any).offerCategory || 'General'),
-          image: '/images/deal2.avif',
-          likes: 0,
-          customerSet: new Set<string>(),
-          selectedProducts: Array.isArray((row as any).selectedProducts) ? (row as any).selectedProducts : [],
-        });
-      }
-
-      const offerEntry = offerMap.get(offerKey);
-      offerEntry.likes += 1;
-      if ((row as any).userName) {
-        offerEntry.customerSet.add(String((row as any).userName));
-      }
-      if ((!offerEntry.selectedProducts || !offerEntry.selectedProducts.length) && Array.isArray((row as any).selectedProducts)) {
-        offerEntry.selectedProducts = (row as any).selectedProducts;
-      }
-    }
-
-    const offers = Array.from(offerMap.values())
-      .map((item) => {
-        const customers = Array.from(item.customerSet).slice(0, 4);
-        return {
-          offerId: item.offerId,
-          requestId: item.requestId,
-          name: item.name,
-          type: item.type,
-          image: item.image,
-          likes: item.likes,
-          customerCount: item.customerSet.size,
-          customers: customers.join(', '),
-          selectedProducts: item.selectedProducts || [],
-        };
-      })
-      .sort((a, b) => b.likes - a.likes)
-      .slice(0, safeLimit);
-
-    const productMap = new Map<string, any>();
-    for (const offer of offers) {
-      const products = Array.isArray(offer.selectedProducts) ? offer.selectedProducts : [];
-      for (const product of products) {
-        const key = String(product?.productId || product?.id || product?.productName || product?.name || '').trim();
-        if (!key) continue;
-
-        if (!productMap.has(key)) {
-          productMap.set(key, {
-            productId: key,
-            name: String(product?.productName || product?.name || 'Untitled Product'),
-            type: String(product?.category || offer.type || 'General'),
-            image: String(product?.imageUrl || '/images/deal2.avif'),
-            likes: 0,
-            customerSet: new Set<string>(),
-            offerName: offer.name,
-          });
-        }
-
-        const productEntry = productMap.get(key);
-        productEntry.likes += offer.likes;
-        const offerCustomers = offer.customers ? String(offer.customers).split(',').map((name) => name.trim()).filter(Boolean) : [];
-        for (const customer of offerCustomers) {
-          productEntry.customerSet.add(customer);
-        }
-      }
-    }
-
-    const products = Array.from(productMap.values())
-      .map((item) => ({
-        productId: item.productId,
-        name: item.name,
-        type: item.type,
-        image: item.image,
-        likes: item.likes,
-        customerCount: item.customerSet.size,
-        customers: Array.from(item.customerSet).slice(0, 4).join(', '),
-        offerName: item.offerName,
-      }))
-      .sort((a, b) => b.likes - a.likes)
-      .slice(0, safeLimit);
-
-    return { offers, products };
   }
 }

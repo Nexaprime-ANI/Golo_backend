@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { MerchantDashboardService } from './merchant-dashboard.service';
@@ -39,8 +39,14 @@ export class MerchantDashboardController {
   }
 
   @Get('analytics/trend')
-  async getMerchantTrend(@CurrentUser() user: any) {
-    return this.merchantDashboardService.getMerchantTrend(this.getMerchantId(user));
+  async getMerchantTrend(
+    @CurrentUser() user: any,
+    @Query('period') period?: 'weekly' | 'monthly',
+  ) {
+    return this.merchantDashboardService.getMerchantTrend(
+      this.getMerchantId(user),
+      period,
+    );
   }
 
   @Get('analytics/realtime')

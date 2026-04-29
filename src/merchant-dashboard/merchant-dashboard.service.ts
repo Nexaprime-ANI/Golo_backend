@@ -236,9 +236,10 @@ export class MerchantDashboardService {
     };
   }
 
-  async getMerchantTrend(merchantId: string) {
+  async getMerchantTrend(merchantId: string, period: 'weekly' | 'monthly' = 'weekly') {
     const mId = new Types.ObjectId(merchantId);
-    const { keys, labels, counts } = this.buildDateBuckets(7);
+    const days = period === 'monthly' ? 30 : 7;
+    const { keys, labels, counts } = this.buildDateBuckets(days);
     const start = new Date(keys[0]);
 
     const rows = await this.orderModel.aggregate([
@@ -262,6 +263,7 @@ export class MerchantDashboardService {
     return {
       success: true,
       data: {
+        period,
         labels,
         values: keys.map((key) => counts.get(key) || 0),
       },

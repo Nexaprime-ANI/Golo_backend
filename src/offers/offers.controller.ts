@@ -125,25 +125,6 @@ export class OffersController {
     return { success: true, ...data, timestamp: new Date().toISOString() };
   }
 
-  @Get('merchant/liked-products')
-  @UseGuards(JwtAuthGuard)
-  async getMerchantLikedProducts(
-    @CurrentUser() user: any,
-    @Query('limit') limit?: string,
-  ) {
-    const userId = user?.id || user?.sub || user?._id;
-    if (!userId) {
-      throw new UnauthorizedException('Authentication required');
-    }
-
-    const data = await this.offersService.getMerchantLikedProducts(
-      String(userId),
-      limit ? Number(limit) : 10,
-    );
-
-    return { success: true, data, timestamp: new Date().toISOString() };
-  }
-
   // Template endpoints (must be BEFORE :offerId route)
   @Post('template/save')
   @UseGuards(JwtAuthGuard)
