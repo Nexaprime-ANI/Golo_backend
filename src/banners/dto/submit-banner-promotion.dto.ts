@@ -8,6 +8,7 @@ import {
   IsString,
   Matches,
   Min,
+  Max,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -118,6 +119,12 @@ export class SubmitBannerPromotionDto {
   @IsNumber()
   @Min(0)
   loyaltyScorePerStar?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(50)
+  loyaltyPointsPerPurchase?: number;
 
   @IsOptional()
   @IsString()

@@ -1077,6 +1077,69 @@ export class UsersService implements OnModuleInit {
     return this.toResponseDto(updatedUser);
   }
 
+  async changePasswordDirect(userId: string, currentPassword: string, newPassword: string): Promise<UserResponseDto> {
+    this.logger.log(`Changing password directly for user: ${userId}`);
+    
+    if (!currentPassword || !newPassword) {
+      throw new BadRequestException('Current password and new password are required');
+    }
+
+    if (newPassword.length < 6) {
+      throw new BadRequestException('New password must be at least 6 characters long');
+    }
+
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Verify current password
+    const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password);
+    if (!isCurrentPasswordValid) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+
+    // Check if new password is the same as current
+    const isCurrentPassword = await bcrypt.compare(newPassword, user.password);
+    if (isCurrentPassword) {
+      throw new BadRequestException('New password cannot be the same as your current password.');
+    }
+
+    // Check password history
+    const passwordHistory = Array.isArray(user.passwordHistory) ? user.passwordHistory : [];
+    for (const oldPasswordHash of passwordHistory) {
+      const isReusedPassword = await bcrypt.compare(newPassword, oldPasswordHash);
+      if (isReusedPassword) {
+        throw new BadRequestException('Previously used passwords are not allowed. Please choose a different password.');
+      }
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update password
+    const updatedUser = await this.userModel.findByIdAndUpdate(
+      userId,
+      {
+        $set: {
+          password: hashedPassword,
+          updatedAt: new Date(),
+        },
+        $push: {
+          passwordHistory: {
+            $each: [user.password],
+            $slice: -5,
+          },
+        },
+      },
+      { new: true }
+    ).exec();
+
+    this.logger.log(`Password changed successfully for user: ${userId}`);
+
+    return this.toResponseDto(updatedUser);
+  }
+
   // ==================== WISHLIST METHODS ====================
 
   async toggleWishlist(userId: string, adId: string): Promise<{ wishlist: string[], added: boolean }> {

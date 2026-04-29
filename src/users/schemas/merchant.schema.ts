@@ -53,6 +53,18 @@ export class Merchant {
   @Prop({ default: 'active' })
   status: 'active' | 'inactive';
 
+  @Prop({ default: true })
+  emailNotifications?: boolean;
+
+  @Prop({ default: true })
+  orderNotifications?: boolean;
+
+  @Prop({ default: true })
+  promotionNotifications?: boolean;
+
+  @Prop({ default: true })
+  pushNotifications?: boolean;
+
   @Prop()
   createdAt: Date;
 

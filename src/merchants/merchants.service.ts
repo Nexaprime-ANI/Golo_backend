@@ -298,4 +298,66 @@ export class MerchantsService {
       );
     }
   }
+
+  /**
+   * Update merchant notification settings
+   * @param userId - Merchant's user ID
+   * @param settings - Notification settings
+   * @returns Updated notification settings
+   */
+  async updateNotificationSettings(userId: string, settings: any) {
+    if (!userId) {
+      throw new BadRequestException('User ID is required');
+    }
+
+    try {
+      const allowedSettings: any = {};
+
+      if (typeof settings.emailNotifications === 'boolean') {
+        allowedSettings.emailNotifications = settings.emailNotifications;
+      }
+      if (typeof settings.orderNotifications === 'boolean') {
+        allowedSettings.orderNotifications = settings.orderNotifications;
+      }
+      if (typeof settings.promotionNotifications === 'boolean') {
+        allowedSettings.promotionNotifications = settings.promotionNotifications;
+      }
+      if (typeof settings.pushNotifications === 'boolean') {
+        allowedSettings.pushNotifications = settings.pushNotifications;
+      }
+
+      allowedSettings.updatedAt = new Date();
+
+      const merchant = await this.merchantModel.findOneAndUpdate(
+        { userId },
+        { $set: allowedSettings },
+        { new: true, runValidators: true },
+      );
+
+      if (!merchant) {
+        throw new NotFoundException('Merchant not found');
+      }
+
+      return {
+        success: true,
+        message: 'Notification settings updated successfully',
+        data: {
+          emailNotifications: merchant.emailNotifications ?? true,
+          orderNotifications: merchant.orderNotifications ?? true,
+          promotionNotifications: merchant.promotionNotifications ?? true,
+          pushNotifications: merchant.pushNotifications ?? true,
+        },
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException(
+        `Failed to update notification settings: ${error.message}`,
+      );
+    }
+  }
 }
