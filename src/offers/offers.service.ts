@@ -76,17 +76,31 @@ export class OffersService implements OnModuleInit {
     return !(Math.abs(latitude) < 0.000001 && Math.abs(longitude) < 0.000001);
   }
 
-  private normalizeDateStrings(dateStrings: string[] = []): Date[] {
-    return Array.from(new Set(dateStrings))
-      .map((dateStr) => {
-        const parsed = new Date(dateStr);
-        if (Number.isNaN(parsed.getTime())) return null;
-        const normalized = new Date(parsed);
-        normalized.setHours(0, 0, 0, 0);
-        return normalized;
+  private normalizeVisibilityDates(input: any[] = []): Date[] {
+    const dates = Array.isArray(input) ? input : [];
+    const normalized = dates
+      .map((value: any) => new Date(value))
+      .filter((d: Date) => !Number.isNaN(d.getTime()))
+      .map((d: Date) => {
+        const day = new Date(d);
+        // Use UTC day boundaries so the server timezone doesn't shift visibility windows.
+        day.setUTCHours(0, 0, 0, 0);
+        return day;
       })
-      .filter((date): date is Date => date !== null)
-      .sort((a, b) => a.getTime() - b.getTime());
+      .sort((a: Date, b: Date) => a.getTime() - b.getTime());
+
+    // De-dup by day timestamp after normalization.
+    return Array.from(new Map(normalized.map((d) => [d.getTime(), d])).values());
+  }
+
+  private buildVisibilityRange(selectedDates: Date[]) {
+    const sorted = selectedDates.slice().sort((a, b) => a.getTime() - b.getTime());
+    const startDate = new Date(sorted[0]);
+    startDate.setUTCHours(0, 0, 0, 0);
+    const endDate = new Date(sorted[sorted.length - 1]);
+    // Inclusive end-of-day so offers remain visible throughout the end date.
+    endDate.setUTCHours(23, 59, 59, 999);
+    return { selectedDates: sorted, startDate, endDate };
   }
 
   // Legacy detection removed — offers are handled only from `offers` collection
@@ -140,11 +154,14 @@ export class OffersService implements OnModuleInit {
       const hasCoords = Number.isFinite(latitude) && Number.isFinite(longitude);
       if (!hasCoords) throw new BadRequestException('Store coordinates missing. Set store location before publishing offers.');
 
-    const normalizedDates = Array.isArray(payload.selectedDates) ? payload.selectedDates.map((d: any) => new Date(d)).filter((d: any) => !Number.isNaN(d.getTime())) : [];
+    const normalizedDates = this.normalizeVisibilityDates(payload.selectedDates);
     if (!normalizedDates.length) throw new BadRequestException('Please select at least one valid visibility date');
 
-    const today = new Date(); today.setHours(0,0,0,0);
-    if (normalizedDates[0] < today) throw new BadRequestException('Selected dates cannot be in the past');
+    const todayUtc = new Date();
+    todayUtc.setUTCHours(0, 0, 0, 0);
+    if (normalizedDates[0] < todayUtc) throw new BadRequestException('Selected dates cannot be in the past');
+
+    const { selectedDates, startDate, endDate } = this.buildVisibilityRange(normalizedDates);
 
     const selectedDays = normalizedDates.length;
     const dailyRate = Number(payload.dailyRate ?? 240);
@@ -161,9 +178,9 @@ export class OffersService implements OnModuleInit {
       description: payload.description || '',
       imageUrl: payload.imageUrl,
       recommendedSize: payload.recommendedSize || '1920 x 520 px',
-      selectedDates: normalizedDates,
-      startDate: normalizedDates[0],
-      endDate: normalizedDates[normalizedDates.length - 1],
+      selectedDates,
+      startDate,
+      endDate,
       selectedDays,
       dailyRate,
       platformFee,
@@ -226,12 +243,13 @@ export class OffersService implements OnModuleInit {
     if (payload.category !== undefined) request.category = String(payload.category).trim();
     if (payload.imageUrl !== undefined) request.imageUrl = payload.imageUrl;
     if (Array.isArray(payload.selectedDates) && payload.selectedDates.length) {
-      const normalized = payload.selectedDates.map((d: any) => new Date(d)).filter((d: any) => !Number.isNaN(d.getTime()));
+      const normalized = this.normalizeVisibilityDates(payload.selectedDates);
       if (!normalized.length) throw new BadRequestException('Please provide valid selectedDates');
-      request.selectedDates = normalized;
-      request.startDate = normalized[0];
-      request.endDate = normalized[normalized.length - 1];
-      request.selectedDays = normalized.length;
+      const { selectedDates, startDate, endDate } = this.buildVisibilityRange(normalized);
+      request.selectedDates = selectedDates;
+      request.startDate = startDate;
+      request.endDate = endDate;
+      request.selectedDays = selectedDates.length;
       request.totalPrice = request.dailyRate * request.selectedDays + request.platformFee;
     }
 
@@ -440,9 +458,14 @@ export class OffersService implements OnModuleInit {
 
     const merchantsByUserId = new Map<string, any>(merchants.map((m) => [String(m.userId), m]));
 
+    const now = new Date();
+
     if (!hasUserCoordinates && !locationNeedle) {
       let normalized = offerRows.map((row) => {
         const merchant = merchantsByUserId.get(String(row.merchantId));
+        const startsAt = row.startDate ? new Date(row.startDate) : null;
+        const endsAt = row.endDate ? new Date(row.endDate) : null;
+        const isActiveNow = Boolean(startsAt && endsAt) && startsAt <= now && endsAt >= now;
         return {
           offerId: String(row._id),
           requestId: row.requestId,
@@ -455,7 +478,7 @@ export class OffersService implements OnModuleInit {
           startsAt: row.startDate,
           endsAt: row.endDate,
           status: row.status,
-          isActiveNow: false,
+          isActiveNow,
           distanceKm: null,
           merchant: {
             merchantId: String(row.merchantId),
@@ -471,6 +494,9 @@ export class OffersService implements OnModuleInit {
           createdAt: row.createdAt,
         };
       });
+
+      // Only show offers that are within the visibility window (startDate <= now <= endDate).
+      normalized = normalized.filter((row) => row.isActiveNow);
 
       if (queryNeedle) {
         normalized = normalized.filter((row) => {
@@ -498,8 +524,6 @@ export class OffersService implements OnModuleInit {
         pagination: { page: safePage, limit: safeLimit, total, pages },
       };
     }
-
-    const now = new Date();
 
     let normalized = offerRows.map((row) => {
       const merchant = merchantsByUserId.get(String(row.merchantId));
@@ -561,6 +585,9 @@ export class OffersService implements OnModuleInit {
         createdAt: row.createdAt,
       };
     });
+
+    // Only show offers that are within the visibility window (startDate <= now <= endDate).
+    normalized = normalized.filter((row) => row.isActiveNow);
 
     if (hasUserCoordinates) {
       normalized = normalized.filter((row) => {

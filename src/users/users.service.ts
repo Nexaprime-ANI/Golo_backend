@@ -30,6 +30,43 @@ export class UsersService implements OnModuleInit {
   private mailTransporter: nodemailer.Transporter | null = null;
   private mailFrom: string | null = null;
 
+  private ensureOtpMailerReady() {
+    if (this.mailTransporter && this.mailFrom) return;
+
+    const smtpHost =
+      this.configService.get<string>('SMTP_HOST') ||
+      this.configService.get<string>('EMAIL_HOST');
+    const smtpPort = Number(
+      this.configService.get<string>('SMTP_PORT') ||
+        this.configService.get<string>('EMAIL_PORT') ||
+        '587',
+    );
+    const smtpUser =
+      this.configService.get<string>('SMTP_USER') ||
+      this.configService.get<string>('EMAIL_USER');
+    const smtpPass =
+      this.configService.get<string>('SMTP_PASS') ||
+      this.configService.get<string>('EMAIL_PASSWORD');
+    this.mailFrom =
+      this.configService.get<string>('SMTP_FROM') ||
+      this.configService.get<string>('EMAIL_FROM') ||
+      smtpUser ||
+      null;
+
+    this.logger.debug(
+      `OTP mailer config host=${!!smtpHost} port=${smtpPort} user=${!!smtpUser} from=${!!this.mailFrom}`,
+    );
+
+    if (smtpHost && smtpUser && smtpPass && this.mailFrom) {
+      this.mailTransporter = nodemailer.createTransport({
+        host: smtpHost,
+        port: smtpPort,
+        secure: smtpPort === 465,
+        auth: { user: smtpUser, pass: smtpPass },
+      });
+    }
+  }
+
   /**
    * Admin: Send a warning notification to a user
    */
@@ -76,11 +113,27 @@ export class UsersService implements OnModuleInit {
     @Optional() @InjectModel(OfferLikeHistory.name) private offerLikeHistoryModel?: Model<OfferLikeHistoryDocument>,
     @Optional() @InjectModel(OfferPromotion.name) private offerPromotionModel?: Model<OfferPromotionDocument>,
   ) {
-    const smtpHost = this.configService.get<string>('SMTP_HOST');
-    const smtpPort = Number(this.configService.get<string>('SMTP_PORT') || '587');
-    const smtpUser = this.configService.get<string>('SMTP_USER');
-    const smtpPass = this.configService.get<string>('SMTP_PASS');
-    this.mailFrom = this.configService.get<string>('SMTP_FROM') || smtpUser || null;
+    // Support both SMTP_* and EMAIL_* env var conventions.
+    // The repo's `.env` currently uses EMAIL_* while OTP flow historically used SMTP_*.
+    const smtpHost =
+      this.configService.get<string>('SMTP_HOST') ||
+      this.configService.get<string>('EMAIL_HOST');
+    const smtpPort = Number(
+      this.configService.get<string>('SMTP_PORT') ||
+        this.configService.get<string>('EMAIL_PORT') ||
+        '587',
+    );
+    const smtpUser =
+      this.configService.get<string>('SMTP_USER') ||
+      this.configService.get<string>('EMAIL_USER');
+    const smtpPass =
+      this.configService.get<string>('SMTP_PASS') ||
+      this.configService.get<string>('EMAIL_PASSWORD');
+    this.mailFrom =
+      this.configService.get<string>('SMTP_FROM') ||
+      this.configService.get<string>('EMAIL_FROM') ||
+      smtpUser ||
+      null;
 
     this.logger.debug(`SMTP config host=${!!smtpHost} port=${smtpPort} user=${!!smtpUser}`);
 
@@ -948,6 +1001,8 @@ export class UsersService implements OnModuleInit {
         },
         { new: true }
       ).exec();
+
+      this.ensureOtpMailerReady();
 
       if (!this.mailTransporter || !this.mailFrom) {
         throw new InternalServerErrorException('Email service not configured. Please contact support.');
