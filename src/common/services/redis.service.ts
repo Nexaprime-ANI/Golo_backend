@@ -11,7 +11,6 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   constructor(private configService: ConfigService) {}
 
   async onModuleInit() {
-    const kafkaEnabled = this.configService.get<boolean>('config.kafka.enabled');
     const redisConfig = this.configService.get<{
       enabled?: boolean;
       host?: string;
@@ -41,6 +40,11 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(
         '⚠️ Upstash Redis not configured - caching disabled. Please add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN to .env',
       );
+||||||| 5ac03ce
+    if (!kafkaEnabled || !redisConfig?.enabled) {
+      this.logger.warn('Redis caching disabled because Kafka is off');
+    if (!redisConfig?.enabled) {
+      this.logger.warn('Redis caching disabled by configuration');
       this.enabled = false;
       return;
     }

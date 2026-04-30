@@ -54,12 +54,42 @@ export class AdsController {
       data: stats,
     };
   }
+||||||| 5ac03ce
+    /**
+     * Admin: Get real-time listing report stats for admin panel cards
+     */
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles(UserRole.ADMIN)
+    @Get('reports/stats')
+    async getListingReportStats() {
+      // Real-time stats for admin panel cards
+      const stats = await this.adsService.getReportStats();
+      return {
+        success: true,
+        data: stats
+      };
+    }
   private readonly logger = new Logger(AdsController.name);
 
   constructor(
     private readonly adsService: AdsService,
     @Optional() private readonly kafkaService?: KafkaService,
   ) {}
+
+  /**
+   * Admin: Get real-time listing report stats for admin panel cards
+   */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @Get('reports/stats')
+  async getListingReportStats() {
+    // Real-time stats for admin panel cards
+    const stats = await this.adsService.getReportStats();
+    return {
+      success: true,
+      data: stats
+    };
+  }
 
   // ==================== PUBLIC ROUTES (No Auth Required) ====================
 
@@ -850,6 +880,21 @@ export class AdsController {
     }
   }
 
+||||||| 5ac03ce
+  // src/ads/ads.controller.ts
+@Get('test-kafka')
+async testKafka() {
+  try {
+    const result = await this.kafkaService.emit('test-topic', {
+      message: 'Hello from GOLO Backend!',
+      timestamp: new Date().toISOString()
+    });
+    return { success: true, message: 'Kafka message sent', result };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
   /**
    * Delete ad via Kafka (async) - Authenticated users only
    */
@@ -857,6 +902,15 @@ export class AdsController {
   @HttpCode(HttpStatus.ACCEPTED)
   @UseGuards(JwtAuthGuard)
   async deleteAdAsync(@Param('adId') adId: string, @CurrentUser() user: any) {
+||||||| 5ac03ce
+  async deleteAdAsync(
+    @Param('adId') adId: string,
+    @CurrentUser() user: any
+  ) {
+  async deleteAdAsync(
+    @Param('adId') adId: string,
+    @CurrentUser() user: any,
+  ) {
     this.logger.log(`REST: Sending async delete request for ad: ${adId}`);
 
     const correlationId = uuidv4();
@@ -878,6 +932,16 @@ export class AdsController {
         },
         correlationId,
       );
+||||||| 5ac03ce
+      await this.kafkaService.send(KAFKA_TOPICS.AD_DELETE, {
+        adId,
+        userId: user.id
+      }, correlationId);
+      await this.kafkaService.send(
+        KAFKA_TOPICS.AD_DELETE,
+        { adId, userId: user.id },
+        correlationId,
+      );
 
       return {
         success: true,
@@ -895,6 +959,29 @@ export class AdsController {
         correlationId,
         timestamp: new Date().toISOString(),
       };
+    }
+  }
+
+  @Get('test-kafka')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async testKafka() {
+    const correlationId = uuidv4();
+
+    try {
+      if (!this.kafkaService) {
+        return { success: false, message: 'Kafka is disabled on server' };
+      }
+
+      await this.kafkaService.emit(
+        'test-topic',
+        { message: 'Hello from GOLO Backend!' },
+        correlationId,
+      );
+
+      return { success: true, message: 'Kafka message emitted', correlationId };
+    } catch (error) {
+      return { success: false, error: error.message, correlationId };
     }
   }
 
@@ -1201,10 +1288,10 @@ export class AdsController {
   }
 
   @Get('home/featured')
-  async getFeaturedDeals(@Query('limit') limit: string = '10') {
+  async getFeaturedDeals(@Query('limit') limit?: string) {
     this.logger.log('Fetching featured deals for home screen');
     try {
-      const limitNum = parseInt(limit, 10);
+      const limitNum = parseInt(limit || '10', 10);
       const deals = await this.adsService.getFeaturedDeals(limitNum);
       return { success: true, data: deals };
     } catch (error) {
@@ -1214,10 +1301,10 @@ export class AdsController {
   }
 
   @Get('home/trending')
-  async getTrendingSearches(@Query('limit') limit: string = '10') {
+  async getTrendingSearches(@Query('limit') limit?: string) {
     this.logger.log('Fetching trending searches');
     try {
-      const limitNum = parseInt(limit, 10);
+      const limitNum = parseInt(limit || '10', 10);
       const trending = await this.adsService.getTrendingSearches(limitNum);
       return { success: true, data: trending };
     } catch (error) {
@@ -1231,9 +1318,12 @@ export class AdsController {
     @CurrentUser() user: any,
     @Query('limit') limit: string = '10',
   ) {
+||||||| 5ac03ce
+  async getRecommendedDeals(@CurrentUser() user: any, @Query('limit') limit: string = '10') {
+  async getRecommendedDeals(@CurrentUser() user: any, @Query('limit') limit?: string) {
     this.logger.log('Fetching recommended deals');
     try {
-      const limitNum = parseInt(limit, 10);
+      const limitNum = parseInt(limit || '10', 10);
       const userId = user?.id;
       const deals = await this.adsService.getRecommendedDeals(userId, limitNum);
       return { success: true, data: deals };
@@ -1244,10 +1334,10 @@ export class AdsController {
   }
 
   @Get('home/popular-places')
-  async getPopularPlaces(@Query('limit') limit: string = '10') {
+  async getPopularPlaces(@Query('limit') limit?: string) {
     this.logger.log('Fetching popular places');
     try {
-      const limitNum = parseInt(limit, 10);
+      const limitNum = parseInt(limit || '10', 10);
       const places = await this.adsService.getPopularPlaces(limitNum);
       return { success: true, data: places };
     } catch (error) {
@@ -1366,6 +1456,20 @@ export class AdsController {
         error: error.message,
       };
     }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('reports/merchant/my')
+  async getMerchantReports(
+    @CurrentUser() user: any,
+    @Query('status') status?: 'pending' | 'reviewed' | 'action_taken',
+  ) {
+    const rows = await this.adsService.getMerchantReports(user.id, status as any);
+    return {
+      success: true,
+      data: rows,
+      count: rows.length,
+    };
   }
 
   /**
@@ -1491,6 +1595,26 @@ export class AdsController {
         error: error.message,
       };
     }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Put('reports/:reportId/merchant-status')
+  async updateMerchantReportStatus(
+    @Param('reportId') reportId: string,
+    @Body() updateDto: UpdateReportStatusDto,
+    @CurrentUser() user: any,
+  ) {
+    const result = await this.adsService.updateMerchantReportStatus(
+      reportId,
+      updateDto.status,
+      user.id,
+      updateDto.adminNotes,
+    );
+
+    return {
+      success: true,
+      message: result.message,
+    };
   }
 
   /**

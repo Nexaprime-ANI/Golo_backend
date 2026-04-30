@@ -13,6 +13,7 @@ import { KAFKA_TOPICS } from '../common/constants/kafka-topics';
 import { RedisService } from '../common/services/redis.service';
 import { CreateMerchantProductDto } from './dto/create-merchant-product.dto';
 import { ListMerchantProductsDto } from './dto/list-merchant-products.dto';
+import { UpdateMerchantProductDto } from './dto/update-merchant-product.dto';
 import {
   MerchantProduct,
   MerchantProductDocument,
@@ -161,6 +162,42 @@ export class MerchantProductsService implements OnModuleInit {
     return response;
   }
 
+  async listProductsByMerchantId(merchantId: string, query: ListMerchantProductsDto) {
+    const page = Number(query.page) || 1;
+    const limit = Number(query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    const filter: FilterQuery<MerchantProductDocument> = { merchantId };
+
+    if (query.search?.trim()) {
+      const searchRegex = new RegExp(query.search.trim(), 'i');
+      filter.$or = [{ name: searchRegex }, { category: searchRegex }];
+    }
+
+    const [products, total] = await Promise.all([
+      this.merchantProductModel
+        .find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .exec(),
+      this.merchantProductModel.countDocuments(filter),
+    ]);
+
+    return {
+      success: true,
+      data: {
+        products: products.map((product) => this.mapProduct(product)),
+      },
+      pagination: {
+        total,
+        page,
+        limit,
+        pages: Math.ceil(total / limit),
+      },
+    };
+  }
+
   async getProduct(merchantId: string, productId: string) {
     const cacheKey = this.cacheItemKey(merchantId, productId);
     const cached = await this.redisService.get<any>(cacheKey);
@@ -184,6 +221,55 @@ export class MerchantProductsService implements OnModuleInit {
 
     await this.redisService.set(cacheKey, response, 300);
     return response;
+  }
+
+  async getPublicProductById(productId: string) {
+    const product = await this.merchantProductModel.findById(productId).exec();
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
+
+    return {
+      success: true,
+      data: this.mapProduct(product),
+    };
+  }
+
+  async updateProduct(merchantId: string, productId: string, dto: UpdateMerchantProductDto) {
+    const product = await this.merchantProductModel.findById(productId).exec();
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
+
+    if (String(product.merchantId) !== String(merchantId)) {
+      throw new ForbiddenException('You can only update your own products');
+    }
+
+    if (typeof dto.name === 'string') {
+      product.name = dto.name.trim();
+    }
+    if (typeof dto.category === 'string') {
+      product.category = dto.category.trim();
+    }
+    if (typeof dto.description === 'string') {
+      product.description = dto.description.trim();
+    }
+    if (typeof dto.price === 'number') {
+      product.price = dto.price;
+    }
+    if (typeof dto.stockQuantity === 'number') {
+      product.stockQuantity = dto.stockQuantity;
+      product.status = this.deriveStatus(dto.stockQuantity);
+    }
+
+    await product.save();
+    await this.invalidateMerchantProductCache(merchantId);
+
+    return {
+      success: true,
+      message: 'Product updated successfully',
+      data: this.mapProduct(product),
+    };
   }
 
   async deleteProduct(merchantId: string, productId: string) {

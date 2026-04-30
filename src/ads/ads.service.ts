@@ -67,14 +67,23 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
           },
         },
         {
-          $lookup: {
-            from: 'users',
-            let: { adUserObjectId: '$adUserObjectId' },
-            pipeline: [
-              { $match: { $expr: { $eq: ['$_id', '$$adUserObjectId'] } } },
-            ],
-            as: 'uploader',
-          },
+         $lookup: {
+             from: 'users',
+             let: { adUserObjectId: '$adUserObjectId' },
+             pipeline: [
+               { 
+                 $match: { 
+                   $expr: { 
+                     $and: [
+                       { $eq: ['$_id', '$$adUserObjectId'] },
+                       { $in: ['$_id', [{ $toObjectId: '$_id' }]] }
+                     ]
+                   } 
+                 } 
+               },
+             ],
+             as: 'uploader',
+           },
         },
         { $unwind: { path: '$uploader', preserveNullAndEmptyArrays: true } },
         // Always set uploader.userId from uploader._id if uploader exists
@@ -1694,57 +1703,75 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
      ✅ SAFE KAFKA EVENTS (PUBLIC NOW)
   ============================================================ */
 
-  async emitAdCreated(ad: Ad, correlationId: string): Promise<void> {
-    if (!this.kafkaService) {
-      this.logger.warn('Kafka disabled - AD_CREATED skipped');
-      return;
-    }
+   async emitAdCreated(ad: Ad, correlationId: string): Promise<void> {
+     if (!this.kafkaService) {
+       this.logger.debug('Kafka disabled - AD_CREATED event not emitted');
+       return;
+     }
 
-    await this.kafkaService.emit(
-      KAFKA_TOPICS.AD_CREATED,
-      {
-        adId: ad.adId,
-        userId: ad.userId,
-        title: ad.title,
-        category: ad.category,
-        price: ad.price,
-        timestamp: new Date().toISOString(),
-      },
-      correlationId,
-    );
-  }
+     try {
+       await this.kafkaService.emit(
+         KAFKA_TOPICS.AD_CREATED,
+         {
+           adId: ad.adId,
+           userId: ad.userId,
+           title: ad.title,
+           category: ad.category,
+           price: ad.price,
+           timestamp: new Date().toISOString(),
+         },
+         correlationId,
+       );
+     } catch (error) {
+       this.logger.error(`Failed to emit AD_CREATED event: ${error.message}`);
+     }
+   }
 
-  async emitAdUpdated(ad: Ad, correlationId: string): Promise<void> {
-    if (!this.kafkaService) return;
+   async emitAdUpdated(ad: Ad, correlationId: string): Promise<void> {
+     if (!this.kafkaService) {
+       this.logger.debug('Kafka disabled - AD_UPDATED event not emitted');
+       return;
+     }
 
-    await this.kafkaService.emit(
-      KAFKA_TOPICS.AD_UPDATED,
-      {
-        adId: ad.adId,
-        userId: ad.userId,
-        timestamp: new Date().toISOString(),
-      },
-      correlationId,
-    );
-  }
+     try {
+       await this.kafkaService.emit(
+         KAFKA_TOPICS.AD_UPDATED,
+         {
+           adId: ad.adId,
+           userId: ad.userId,
+           timestamp: new Date().toISOString(),
+         },
+         correlationId,
+       );
+     } catch (error) {
+       this.logger.error(`Failed to emit AD_UPDATED event: ${error.message}`);
+     }
+   }
 
-  async emitAdDeleted(
-    adId: string,
-    userId: string,
-    correlationId: string,
-  ): Promise<void> {
-    if (!this.kafkaService) return;
+   async emitAdDeleted(
+     adId: string,
+     userId: string,
+     correlationId: string,
+   ): Promise<void> {
+     if (!this.kafkaService) {
+       this.logger.debug('Kafka disabled - AD_DELETED event not emitted');
+       return;
+     }
 
-    await this.kafkaService.emit(
-      KAFKA_TOPICS.AD_DELETED,
-      {
-        adId,
-        userId,
-        timestamp: new Date().toISOString(),
-      },
-      correlationId,
-    );
-  }
+     try {
+       await this.kafkaService.emit(
+         KAFKA_TOPICS.AD_DELETED,
+         {
+           adId,
+           userId,
+           timestamp: new Date().toISOString(),
+         },
+         correlationId,
+       );
+     } catch (error) {
+       this.logger.error(`Failed to emit AD_DELETED event: ${error.message}`);
+     }
+   }
 
   /* ============================================================
      REPORTING & MODERATION
@@ -2267,6 +2294,84 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
       this.logger.error(`Error updating report status: ${message}`);
       throw error;
     }
+  }
+
+  async getMerchantReports(
+    merchantId: string,
+    status?: ReportStatus,
+  ): Promise<any[]> {
+    const ads = await this.adModel
+      .find({ userId: String(merchantId) })
+      .select('adId title status reportCount')
+      .lean()
+      .exec();
+
+    const adIds = ads.map((ad: any) => ad.adId).filter(Boolean);
+    if (!adIds.length) {
+      return [];
+    }
+
+    const filter: any = { adId: { $in: adIds } };
+    if (status) {
+      filter.status = status;
+    }
+
+    const reports = await this.reportModel
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+
+    const adMap = new Map<string, any>();
+    ads.forEach((ad: any) => {
+      adMap.set(ad.adId, ad);
+    });
+
+    return reports.map((report: any) => {
+      const ad = adMap.get(report.adId);
+      return {
+        ...report,
+        adTitle: ad?.title || 'Unknown listing',
+        adStatus: ad?.status || 'unknown',
+        adReportCount: ad?.reportCount || 0,
+      };
+    });
+  }
+
+  async updateMerchantReportStatus(
+    reportId: string,
+    status: ReportStatus,
+    merchantId: string,
+    adminNotes?: string,
+  ): Promise<{ success: boolean; message: string }> {
+    const report = await this.reportModel.findOne({ reportId }).lean().exec();
+    if (!report) {
+      throw new NotFoundException('Report not found');
+    }
+
+    const ad = await this.adModel.findOne({ adId: report.adId }).lean().exec();
+    if (!ad || String(ad.userId) !== String(merchantId)) {
+      throw new ForbiddenException('You can only update reports for your own ads');
+    }
+
+    await this.reportModel
+      .findOneAndUpdate(
+        { reportId },
+        {
+          $set: {
+            status,
+            adminNotes: adminNotes || '',
+            reviewedAt: new Date(),
+            reviewedBy: merchantId,
+          },
+        },
+      )
+      .exec();
+
+    return {
+      success: true,
+      message: 'Report status updated successfully',
+    };
   }
 
   /**

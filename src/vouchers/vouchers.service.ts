@@ -1,21 +1,46 @@
 import { Injectable, BadRequestException, NotFoundException, ForbiddenException, Logger, InternalServerErrorException, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { isValidObjectId, Model, Types } from 'mongoose';
 import * as QRCode from 'qrcode';
 import { randomInt } from 'crypto';
 import { Voucher, VoucherStatus, VoucherDocument } from './schemas/voucher.schema';
-import { BannerPromotionDocument } from '../banners/schemas/banner-promotion.schema';
+import {
+  BannerPromotionDocument,
+  BannerPromotionType,
+} from '../banners/schemas/banner-promotion.schema';
+import { OfferPromotionDocument, OfferPromotionStatus } from '../offers/schemas/offer-promotion.schema';
 import { UserDocument } from '../users/schemas/user.schema';
+import { MerchantDocument } from '../users/schemas/merchant.schema';
+import { MerchantProduct, MerchantProductDocument } from '../merchant-products/schemas/merchant-product.schema';
+import { OrdersService } from '../orders/orders.service';
 
 @Injectable()
 export class VouchersService implements OnModuleInit {
   private readonly logger = new Logger('VouchersService');
+  private readonly legacyOfferCategorySet = new Set([
+    'special',
+    'festival',
+    'limited time',
+    'combo',
+    'clearance',
+  ]);
+
+  private deriveProductStatus(stockQuantity: number): 'In Stock' | 'Low Stock' | 'Out of Stock' {
+    if (stockQuantity <= 0) return 'Out of Stock';
+    if (stockQuantity <= 10) return 'Low Stock';
+    return 'In Stock';
+  }
 
   constructor(
     @InjectModel('Voucher') private voucherModel: Model<VoucherDocument>,
     @InjectModel('BannerPromotion')
     private bannerModel: Model<BannerPromotionDocument>,
+    @InjectModel('OfferPromotion')
+    private offerModel: Model<OfferPromotionDocument>,
     @InjectModel('User') private userModel: Model<UserDocument>,
+    @InjectModel('Merchant') private merchantModel: Model<MerchantDocument>,
+    @InjectModel(MerchantProduct.name) private merchantProductModel: Model<MerchantProductDocument>,
+    private ordersService: OrdersService,
   ) {}
 
   async onModuleInit() {
@@ -25,26 +50,41 @@ export class VouchersService implements OnModuleInit {
         { verificationCode: null },
         { $unset: { verificationCode: 1 } },
       );
+      const existingIndexes = await this.voucherModel.collection
+        .listIndexes()
+        .toArray();
 
-      // Drop stale unique index (could be non-sparse) if it exists.
-      try {
-        await this.voucherModel.collection.dropIndex('verificationCode_1');
-      } catch (error) {
-        if (error?.codeName !== 'IndexNotFound') {
-          throw error;
-        }
-      }
-
-      // Recreate index to enforce uniqueness only for real string codes.
-      await this.voucherModel.collection.createIndex(
-        { verificationCode: 1 },
-        {
-          unique: true,
-          partialFilterExpression: { verificationCode: { $type: 'string' } },
-          name: 'verificationCode_1',
-        },
+      const verificationCodeIndex = existingIndexes.find(
+        (index) => index.name === 'verificationCode_1',
       );
+
+      const hasDesiredVerificationCodeIndex =
+        Boolean(verificationCodeIndex?.unique) &&
+        verificationCodeIndex?.partialFilterExpression?.verificationCode?.$type ===
+          'string';
+
+      if (!hasDesiredVerificationCodeIndex) {
+        // Replace legacy sparse index with partial index (or create fresh if missing).
+        if (verificationCodeIndex) {
+          await this.voucherModel.collection.dropIndex('verificationCode_1');
+        }
+
+        await this.voucherModel.collection.createIndex(
+          { verificationCode: 1 },
+          {
+            unique: true,
+            partialFilterExpression: { verificationCode: { $type: 'string' } },
+            name: 'verificationCode_1',
+          },
+        );
+      }
     } catch (error) {
+      if (error?.code === 86 || error?.codeName === 'IndexKeySpecsConflict') {
+        this.logger.warn(
+          'verificationCode_1 index already exists with a different definition; skipping index migration for this startup.',
+        );
+        return;
+      }
       this.logger.error(`Error ensuring verification code index: ${error.message}`);
       throw error;
     }
@@ -87,22 +127,142 @@ export class VouchersService implements OnModuleInit {
     return this.generateCode(3, 4, '-');
   }
 
+  private async generateUniqueVerificationCode(): Promise<string> {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const verificationCode = this.generateVerificationCode();
+      const existingVoucher = await this.voucherModel
+        .exists({ verificationCode })
+        .lean()
+        .exec();
+
+      if (!existingVoucher) {
+        return verificationCode;
+      }
+    }
+
+    throw new InternalServerErrorException(
+      'Unable to generate a unique verification code',
+    );
+  }
+
+  private async assertVoucherBelongsToMerchant(
+    voucher: VoucherDocument,
+    merchantId?: string,
+  ): Promise<void> {
+    if (!merchantId) {
+      throw new BadRequestException('Merchant ID is required');
+    }
+
+    const currentMerchantId = String(merchantId);
+    const allowedMerchantIds = new Set<string>([currentMerchantId]);
+
+    // Legacy support: some old voucher rows may have merchant profile _id
+    // instead of user id in merchantId.
+    const merchantProfile = await this.merchantModel
+      .findOne({ userId: currentMerchantId })
+      .select('_id')
+      .lean()
+      .exec();
+
+    if (merchantProfile?._id) {
+      allowedMerchantIds.add(String(merchantProfile._id));
+    }
+
+    const offer = await this.bannerModel
+      .findById(voucher.offerId)
+      .select('merchantId')
+      .lean()
+      .exec();
+
+    const offerMerchantId = String(offer?.merchantId || '');
+    if (offerMerchantId) {
+      allowedMerchantIds.add(offerMerchantId);
+    }
+
+    const voucherMerchantId = String(voucher.merchantId);
+    if (allowedMerchantIds.has(voucherMerchantId)) {
+      return;
+    }
+
+    // Self-heal legacy rows where voucher merchantId drifted from offer owner.
+    if (offerMerchantId && allowedMerchantIds.has(offerMerchantId)) {
+      try {
+        voucher.merchantId = new Types.ObjectId(offerMerchantId);
+        await voucher.save();
+        return;
+      } catch {
+        // Ignore migration failures and fall through to forbidden response.
+      }
+    }
+
+    if (!allowedMerchantIds.has(voucherMerchantId)) {
+      throw new ForbiddenException('This voucher belongs to another merchant');
+    }
+  }
+
+private isLikelyOffer(offer: {
+    promotionType?: BannerPromotionType;
+    bannerCategory?: string;
+    bannerTitle?: string;
+  }): boolean {
+    if (offer?.promotionType === BannerPromotionType.OFFER) {
+      return true;
+    }
+
+    if (offer?.promotionType) {
+      return false;
+    }
+
+    const category = String(offer?.bannerCategory || '').trim().toLowerCase();
+    if (this.legacyOfferCategorySet.has(category)) {
+      return true;
+    }
+
+    const title = String(offer?.bannerTitle || '').trim().toLowerCase();
+    return title.includes('offer') || title.includes('deal');
+  }
+
   /**
-   * Claim an offer - User claims a deal and gets a voucher/QR code
+   * Find offer from either BannerPromotion or OfferPromotion collection
    */
+  private async findOfferById(offerId: string): Promise<{ offer: any; source: 'banner' | 'offer' } | null> {
+    // Try BannerPromotion first
+    const bannerOffer = await this.bannerModel.findById(offerId).lean().exec();
+    if (bannerOffer) {
+      return { offer: bannerOffer, source: 'banner' };
+    }
+
+    // Try OfferPromotion
+    const offer = await this.offerModel.findById(offerId).lean().exec();
+    if (offer) {
+      return { offer, source: 'offer' };
+    }
+
+    return null;
+  }
+
+  /**
+    * Claim an offer - User claims a deal and gets a voucher/QR code
+    */
   async claimOffer(userId: string, offerId: string) {
     try {
-      // Validate offer exists
-      const offer = await this.bannerModel.findById(offerId);
-      if (!offer) {
+      if (!isValidObjectId(offerId)) {
         throw new NotFoundException('Offer not found');
       }
 
-      // Check if voucher already claimed for this offer
+      // Find offer from either collection
+      const offerResult = await this.findOfferById(offerId);
+if (!offerResult) {
+          throw new NotFoundException('Offer not found');
+        }
+
+      const offer = offerResult.offer;
+      const isFromOfferCollection = offerResult.source === 'offer';
+
+      // Check if voucher already claimed for this offer (any status - one claim per user per offer forever)
       const existingVoucher = await this.voucherModel.findOne({
         userId: new Types.ObjectId(userId),
         offerId: new Types.ObjectId(offerId),
-        status: { $in: [VoucherStatus.ACTIVE, VoucherStatus.CLAIMED] },
       });
 
       if (existingVoucher) {
@@ -122,8 +282,27 @@ export class VouchersService implements OnModuleInit {
         quality: 0.92,
       });
 
+      const verificationCode = await this.generateUniqueVerificationCode();
+
       // Calculate expiry (30 days from now)
       const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+      // Get offer title and merchant info based on source
+      const offerTitle = isFromOfferCollection 
+        ? offer.title 
+        : offer.bannerTitle;
+      const merchantName = isFromOfferCollection
+        ? offer.merchantName
+        : offer.merchantName;
+      const merchantId = isFromOfferCollection
+        ? offer.merchantId
+        : offer.merchantId;
+      const category = isFromOfferCollection
+        ? offer.category
+        : offer.bannerCategory;
+      const imageUrl = isFromOfferCollection
+        ? offer.imageUrl
+        : offer.imageUrl;
 
       // Create voucher
       const voucher = await this.voucherModel.create({
@@ -131,19 +310,40 @@ export class VouchersService implements OnModuleInit {
         offerId: new Types.ObjectId(offerId),
         voucherId,
         qrCode,
-        merchantId: offer.merchantId, // From banner/offer
-        offerTitle: offer.bannerTitle,
-        merchantName: offer.merchantName,
-        discount: offer.bannerCategory || 'Special Offer', // Adjust based on your banner schema
-        offerImage: offer.imageUrl,
+        verificationCode,
+        qrImage,
+        merchantId: new Types.ObjectId(String(merchantId)),
+        offerTitle,
+        merchantName,
+        discount: category || 'Special Offer',
+        offerImage: imageUrl,
         status: VoucherStatus.ACTIVE,
         claimedAt: new Date(),
         expiresAt,
         validityHours: 720, // 30 days
       });
 
-      // Save QR image to a property (you can also save to file system or S3)
-      // For now storing the data URL in response
+      // Create an order for the merchant when voucher is claimed
+      try {
+        const orderAmount = offer.totalPrice || 0;
+        
+        // Get merchant profile to find the correct userId for the order
+        // The offer's merchantId might be the profile ID, but orders are filtered by user ID from JWT
+        const merchantProfile = await this.merchantModel.findById(merchantId).select('userId').lean().exec();
+        const orderMerchantId = merchantProfile?.userId || String(merchantId);
+        
+        await this.ordersService.createOrder(
+          userId,
+          orderMerchantId,
+          orderAmount,
+          1, // itemsCount
+          voucher.voucherId, // Link order to voucher
+        );
+        this.logger.log(`Order created for voucher claim: ${voucher.voucherId}`);
+      } catch (orderError) {
+        // Log error but don't fail the voucher claim
+        this.logger.error(`Failed to create order for voucher claim: ${orderError.message}`);
+      }
 
       return {
         success: true,
@@ -151,10 +351,11 @@ export class VouchersService implements OnModuleInit {
           _id: voucher._id,
           voucherId: voucher.voucherId,
           qrCode: voucher.qrCode,
-          verificationCode: null, // Will be generated on-demand
+          verificationCode,
           qrImage, // Data URL for display
           offerTitle: voucher.offerTitle,
           merchantName: voucher.merchantName,
+          merchantId: voucher.merchantId,
           discount: voucher.discount,
           status: voucher.status,
           expiresAt: voucher.expiresAt,
@@ -171,16 +372,15 @@ export class VouchersService implements OnModuleInit {
    * Generate verification code on-demand when user reaches redeem page
    * This speeds up the claim process and generates the code only when needed
    */
-  async generateVerificationCodeForVoucher(voucherId: string, userId: string) {
+  async generateVerificationCodeForVoucher(voucherId: string, merchantId: string) {
     try {
-      const voucher = await this.voucherModel.findOne({
-        voucherId,
-        userId: new Types.ObjectId(userId),
-      });
+      const voucher = await this.voucherModel.findOne({ voucherId });
 
       if (!voucher) {
         throw new NotFoundException('Voucher not found');
       }
+
+      await this.assertVoucherBelongsToMerchant(voucher, merchantId);
 
       // If verification code already exists, return it
       if (voucher.verificationCode) {
@@ -194,7 +394,7 @@ export class VouchersService implements OnModuleInit {
       }
 
       // Generate new verification code
-      const verificationCode = this.generateVerificationCode();
+      const verificationCode = await this.generateUniqueVerificationCode();
       voucher.verificationCode = verificationCode;
       await voucher.save();
 
@@ -281,18 +481,24 @@ export class VouchersService implements OnModuleInit {
         throw new ForbiddenException('You do not have access to this voucher');
       }
 
-      // Generate verification code on first voucher load so the claimed-offer page can show it immediately
+      // Backfill verification code only for legacy vouchers that do not have one yet.
       if (!voucher.verificationCode) {
-        voucher.verificationCode = this.generateVerificationCode();
+        voucher.verificationCode = await this.generateUniqueVerificationCode();
         await voucher.save();
       }
 
-      // Generate fresh QR image with optimized settings
-      const qrImage = await QRCode.toDataURL(voucher.qrCode, {
-        width: 200,
-        margin: 1,
-        errorCorrectionLevel: 'M',
-      });
+      let qrImage = voucher.qrImage;
+
+      // Backfill qrImage only for legacy vouchers that predate stored QR payloads.
+      if (!qrImage) {
+        qrImage = await QRCode.toDataURL(voucher.qrCode, {
+          width: 200,
+          margin: 1,
+          errorCorrectionLevel: 'M',
+        });
+        voucher.qrImage = qrImage;
+        await voucher.save();
+      }
 
       return {
         success: true,
@@ -305,6 +511,31 @@ export class VouchersService implements OnModuleInit {
       this.logger.error(`Error fetching voucher: ${error.message}`);
       throw error;
     }
+  }
+
+  async getPublicVoucherStatus(voucherId: string) {
+    let voucher;
+
+    if (/^[0-9a-fA-F]{24}$/.test(voucherId)) {
+      voucher = await this.voucherModel.findById(voucherId).lean().exec();
+    } else {
+      voucher = await this.voucherModel.findOne({ voucherId }).lean().exec();
+    }
+
+    if (!voucher) {
+      throw new NotFoundException('Voucher not found');
+    }
+
+    return {
+      success: true,
+      data: {
+        _id: String(voucher._id),
+        voucherId: voucher.voucherId,
+        status: voucher.status,
+        redeemedAt: voucher.redeemedAt || null,
+        expiresAt: voucher.expiresAt || null,
+      },
+    };
   }
 
   /**
@@ -333,12 +564,17 @@ export class VouchersService implements OnModuleInit {
         throw new ForbiddenException('You do not have access to this voucher');
       }
 
-      // Generate QR image with optimized settings for faster generation
-      const qrImage = await QRCode.toDataURL(voucher.qrCode, {
-        width: 250,
-        margin: 1,
-        errorCorrectionLevel: 'M',
-      });
+      let qrImage = voucher.qrImage;
+
+      if (!qrImage) {
+        qrImage = await QRCode.toDataURL(voucher.qrCode, {
+          width: 250,
+          margin: 1,
+          errorCorrectionLevel: 'M',
+        });
+        voucher.qrImage = qrImage;
+        await voucher.save();
+      }
 
       return {
         success: true,
@@ -419,6 +655,8 @@ export class VouchersService implements OnModuleInit {
         throw new BadRequestException('Invalid verification code');
       }
 
+      await this.assertVoucherBelongsToMerchant(voucher, merchantId);
+
       console.log(`[verifyVoucherByCode] Voucher: ${voucher.voucherId}`);
 
       // Check if already redeemed
@@ -468,7 +706,7 @@ export class VouchersService implements OnModuleInit {
       console.error(`[verifyVoucherByCode] Error:`, error);
       this.logger.error(`Error verifying voucher by code: ${error.message}`, error.stack);
       
-      if (error instanceof BadRequestException) {
+      if (error instanceof BadRequestException || error instanceof ForbiddenException) {
         throw error;
       }
       
@@ -491,6 +729,8 @@ export class VouchersService implements OnModuleInit {
         console.log(`[verifyVoucher] Voucher not found with voucherId: ${voucherId}`);
         throw new BadRequestException('Voucher not found');
       }
+
+      await this.assertVoucherBelongsToMerchant(voucher, merchantId);
 
       console.log(`[verifyVoucher] Voucher QR code in DB: ${voucher.qrCode}`);
       console.log(`[verifyVoucher] Scanned QR code: ${qrCode}`);
@@ -553,7 +793,7 @@ export class VouchersService implements OnModuleInit {
       this.logger.error(`Error verifying voucher: ${error.message}`, error.stack);
 
       // If it's already a BadRequestException or other NestJS exception, re-throw it
-      if (error instanceof BadRequestException) {
+      if (error instanceof BadRequestException || error instanceof ForbiddenException) {
         throw error;
       }
 
@@ -596,6 +836,8 @@ export class VouchersService implements OnModuleInit {
         throw new BadRequestException('Voucher not found');
       }
 
+      await this.assertVoucherBelongsToMerchant(voucher, actualMerchantId);
+
       // Verify using the provided method
       if (actualQrCode) {
         if (voucher.qrCode !== actualQrCode) {
@@ -627,8 +869,97 @@ export class VouchersService implements OnModuleInit {
       voucher.redemptionCode = redemptionCode;
       await voucher.save();
 
-      // Get user details
-      const user = await this.userModel.findById(voucher.userId).select('name email');
+      // ── Auto-decrement stock for every product linked to the offer ──────────
+      try {
+        const offerId = String(voucher.offerId);
+
+        // Fetch selectedProducts from OfferPromotion first, then BannerPromotion
+        let selectedProducts: Array<{ productId?: string }> = [];
+
+        const offerDoc = await this.offerModel
+          .findById(offerId)
+          .select('selectedProducts')
+          .lean()
+          .exec();
+
+        if (offerDoc?.selectedProducts?.length) {
+          selectedProducts = offerDoc.selectedProducts as Array<{ productId?: string }>;
+        } else {
+          const bannerDoc = await this.bannerModel
+            .findById(offerId)
+            .select('selectedProducts')
+            .lean()
+            .exec();
+          if (bannerDoc?.selectedProducts?.length) {
+            selectedProducts = bannerDoc.selectedProducts as Array<{ productId?: string }>;
+          }
+        }
+
+        for (const item of selectedProducts) {
+          const pid = item?.productId;
+          if (!pid || !isValidObjectId(pid)) continue;
+
+          // Atomically decrement stockQuantity (floor at 0) and refresh status
+          const updated = await this.merchantProductModel
+            .findOneAndUpdate(
+              { _id: pid, stockQuantity: { $gt: 0 } },
+              { $inc: { stockQuantity: -1 } },
+              { new: true },
+            )
+            .exec();
+
+          if (updated) {
+            updated.status = this.deriveProductStatus(updated.stockQuantity);
+            await updated.save();
+            this.logger.log(
+              `Stock decremented for product ${pid}: ${updated.stockQuantity + 1} → ${updated.stockQuantity} (${updated.status})`,
+            );
+          }
+        }
+      } catch (stockError) {
+        // Never fail the redemption due to stock sync errors — log and continue
+        this.logger.error(`Failed to decrement stock after redemption: ${stockError.message}`);
+      }
+      // ────────────────────────────────────────────────────────────────────────
+
+      // Fetch offer to get loyaltyPointsPerPurchase
+      let loyaltyPoints = 0;
+      let offerMerchantId = null;
+      // Try OfferPromotion first
+      const offer = await this.offerModel.findById(voucher.offerId).lean();
+      if (offer && offer.loyaltyRewardEnabled && offer.loyaltyPointsPerPurchase) {
+        loyaltyPoints = Number(offer.loyaltyPointsPerPurchase) || 0;
+        offerMerchantId = offer.merchantId;
+      } else {
+        // Fallback: Try BannerPromotion if not found in OfferPromotion
+        const banner = await this.bannerModel.findById(voucher.offerId).lean();
+        if (
+          banner &&
+          banner.loyaltyRewardEnabled &&
+          banner.loyaltyStarsPerPurchase &&
+          banner.loyaltyScorePerStar
+        ) {
+          loyaltyPoints = Number(banner.loyaltyStarsPerPurchase) * Number(banner.loyaltyScorePerStar) || 0;
+          offerMerchantId = banner.merchantId;
+        }
+      }
+
+      // Credit points to user
+      if (loyaltyPoints > 0) {
+        const user = await this.userModel.findById(voucher.userId);
+        if (user) {
+          // Add to total points
+          user.loyaltyPoints = (user.loyaltyPoints || 0) + loyaltyPoints;
+          // Add to per-merchant points
+          const merchantIdStr = String(offerMerchantId || voucher.merchantId);
+          if (!user.merchantLoyaltyPoints) user.merchantLoyaltyPoints = {};
+          user.merchantLoyaltyPoints[merchantIdStr] = (user.merchantLoyaltyPoints[merchantIdStr] || 0) + loyaltyPoints;
+          await user.save();
+        }
+      }
+
+      // Get user details (after update)
+      const user = await this.userModel.findById(voucher.userId).select('name email loyaltyPoints merchantLoyaltyPoints');
 
       return {
         success: true,
@@ -640,10 +971,16 @@ export class VouchersService implements OnModuleInit {
           discount: voucher.discount,
           redeemedAt: voucher.redeemedAt,
           redemptionCode: redemptionCode,
+          loyaltyPointsCredited: loyaltyPoints,
+          userTotalPoints: user?.loyaltyPoints || 0,
+          merchantPoints: user?.merchantLoyaltyPoints || {},
         },
       };
     } catch (error) {
       this.logger.error(`Error redeeming voucher: ${error.message}`);
+      if (error instanceof BadRequestException || error instanceof ForbiddenException) {
+        throw error;
+      }
       throw error;
     }
   }
@@ -778,7 +1115,7 @@ export class VouchersService implements OnModuleInit {
   ) {
     try {
       // Get merchant's banners/offers from BannerPromotion
-      const query: any = { merchantId };
+      const query: any = { merchantId, promotionType: BannerPromotionType.OFFER };
       if (status) query.status = status;
 
       const skip = (page - 1) * limit;

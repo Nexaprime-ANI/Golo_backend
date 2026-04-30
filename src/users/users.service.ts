@@ -17,7 +17,7 @@ import { Injectable, ConflictException, UnauthorizedException, NotFoundException
   Inject,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { isValidObjectId, Model } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
 import { User, UserDocument, UserRole } from './schemas/user.schema';
@@ -48,6 +48,9 @@ import {
   PaymentDocument,
   PaymentStatus,
 } from '../payments/schemas/payment.schema';
+||||||| 5ac03ce
+import { OfferLikeHistory, OfferLikeHistoryDocument } from '../offers/schemas/offer-like-history.schema';
+import { OfferPromotion, OfferPromotionDocument } from '../offers/schemas/offer-promotion.schema';
 
 @Injectable()
 export class UsersService implements OnModuleInit {
@@ -61,6 +64,43 @@ export class UsersService {
   private readonly logger = new Logger(UsersService.name);
   private mailTransporter: nodemailer.Transporter | null = null;
   private mailFrom: string | null = null;
+
+  private ensureOtpMailerReady() {
+    if (this.mailTransporter && this.mailFrom) return;
+
+    const smtpHost =
+      this.configService.get<string>('SMTP_HOST') ||
+      this.configService.get<string>('EMAIL_HOST');
+    const smtpPort = Number(
+      this.configService.get<string>('SMTP_PORT') ||
+        this.configService.get<string>('EMAIL_PORT') ||
+        '587',
+    );
+    const smtpUser =
+      this.configService.get<string>('SMTP_USER') ||
+      this.configService.get<string>('EMAIL_USER');
+    const smtpPass =
+      this.configService.get<string>('SMTP_PASS') ||
+      this.configService.get<string>('EMAIL_PASSWORD');
+    this.mailFrom =
+      this.configService.get<string>('SMTP_FROM') ||
+      this.configService.get<string>('EMAIL_FROM') ||
+      smtpUser ||
+      null;
+
+    this.logger.debug(
+      `OTP mailer config host=${!!smtpHost} port=${smtpPort} user=${!!smtpUser} from=${!!this.mailFrom}`,
+    );
+
+    if (smtpHost && smtpUser && smtpPass && this.mailFrom) {
+      this.mailTransporter = nodemailer.createTransport({
+        host: smtpHost,
+        port: smtpPort,
+        secure: smtpPort === 465,
+        auth: { user: smtpUser, pass: smtpPass },
+      });
+    }
+  }
 
   /**
    * Admin: Send a warning notification to a user
@@ -118,6 +158,10 @@ export class UsersService {
     @Optional()
     @InjectModel(Payment.name)
     private paymentModel?: Model<PaymentDocument>,
+||||||| 5ac03ce
+    @Optional() @InjectModel('PendingMerchantLocation') private pendingLocationModel?: Model<any>,
+    @Optional() @InjectModel(OfferLikeHistory.name) private offerLikeHistoryModel?: Model<OfferLikeHistoryDocument>,
+    @Optional() @InjectModel(OfferPromotion.name) private offerPromotionModel?: Model<OfferPromotionDocument>,
   ) {
     const smtpHost = this.configService.get<string>('SMTP_HOST');
     const smtpPort = Number(
@@ -127,6 +171,33 @@ export class UsersService {
     const smtpPass = this.configService.get<string>('SMTP_PASS');
     this.mailFrom =
       this.configService.get<string>('SMTP_FROM') || smtpUser || null;
+||||||| 5ac03ce
+    const smtpHost = this.configService.get<string>('SMTP_HOST');
+    const smtpPort = Number(this.configService.get<string>('SMTP_PORT') || '587');
+    const smtpUser = this.configService.get<string>('SMTP_USER');
+    const smtpPass = this.configService.get<string>('SMTP_PASS');
+    this.mailFrom = this.configService.get<string>('SMTP_FROM') || smtpUser || null;
+    // Support both SMTP_* and EMAIL_* env var conventions.
+    // The repo's `.env` currently uses EMAIL_* while OTP flow historically used SMTP_*.
+    const smtpHost =
+      this.configService.get<string>('SMTP_HOST') ||
+      this.configService.get<string>('EMAIL_HOST');
+    const smtpPort = Number(
+      this.configService.get<string>('SMTP_PORT') ||
+        this.configService.get<string>('EMAIL_PORT') ||
+        '587',
+    );
+    const smtpUser =
+      this.configService.get<string>('SMTP_USER') ||
+      this.configService.get<string>('EMAIL_USER');
+    const smtpPass =
+      this.configService.get<string>('SMTP_PASS') ||
+      this.configService.get<string>('EMAIL_PASSWORD');
+    this.mailFrom =
+      this.configService.get<string>('SMTP_FROM') ||
+      this.configService.get<string>('EMAIL_FROM') ||
+      smtpUser ||
+      null;
 
     this.logger.debug(
       `SMTP config host=${!!smtpHost} port=${smtpPort} user=${!!smtpUser}`,
@@ -147,6 +218,36 @@ export class UsersService {
         'SMTP credentials missing; email OTP functionality disabled',
       );
     }
+  }
+
+  // Save a pending merchant location for later sync
+  async savePendingMerchantLocation(payload: { email: string; address: string; latitude: number; longitude: number }) {
+    const normalizedEmail = String(payload.email || '').trim().toLowerCase();
+    if (!normalizedEmail) throw new BadRequestException('Email is required');
+    const doc = await this.pendingLocationModel.findOneAndUpdate(
+      { email: normalizedEmail },
+      { $set: { address: payload.address || '', latitude: Number(payload.latitude), longitude: Number(payload.longitude), updatedAt: new Date() } },
+      { upsert: true, new: true },
+    ).lean().exec();
+    return doc;
+  }
+
+  // Sync pending merchant location into merchant profile
+  async syncPendingMerchantLocation(userId: string, email: string) {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!normalizedEmail) return null;
+    const pending = await this.pendingLocationModel.findOne({ email: normalizedEmail }).lean().exec();
+    if (!pending) return null;
+    // find merchant by userId
+    const merchant = await this.merchantModel.findOne({ userId: userId }).exec();
+    if (!merchant) return null;
+    const pendingAny: any = pending;
+    merchant.storeLocation = pendingAny.address || merchant.storeLocation;
+    merchant.storeLocationLatitude = Number(pendingAny.latitude);
+    merchant.storeLocationLongitude = Number(pendingAny.longitude);
+    await merchant.save();
+    await this.pendingLocationModel.deleteOne({ email: normalizedEmail }).exec();
+    return merchant;
   }
 
   async onModuleInit() {
@@ -227,6 +328,25 @@ export class UsersService {
       if (!registerDto.storeEmail?.trim()) {
         throw new BadRequestException('Store email is required for merchant registration');
       }
+      if (!registerDto.storeLocation?.trim()) {
+        throw new BadRequestException('Store location is required for merchant registration');
+      }
+
+      const latitude = Number(registerDto.storeLocationLatitude);
+      const longitude = Number(registerDto.storeLocationLongitude);
+      const hasValidCoordinates =
+        Number.isFinite(latitude) &&
+        Number.isFinite(longitude) &&
+        latitude >= -90 &&
+        latitude <= 90 &&
+        longitude >= -180 &&
+        longitude <= 180;
+
+      if (!hasValidCoordinates) {
+        throw new BadRequestException(
+          'Please select store location on map to capture valid coordinates',
+        );
+      }
     }
 
     const assignedRole = isSystemAdmin
@@ -254,6 +374,9 @@ export class UsersService {
     const savedUser = await user.save();
 
     if (accountType === 'merchant') {
+      const latitude = Number(registerDto.storeLocationLatitude);
+      const longitude = Number(registerDto.storeLocationLongitude);
+
       await this.merchantModel.create({
         userId: savedUser._id.toString(),
         storeName: registerDto.storeName?.trim(),
@@ -263,6 +386,8 @@ export class UsersService {
         storeCategory: registerDto.storeCategory?.trim() || undefined,
         storeSubCategory: registerDto.storeSubCategory?.trim() || undefined,
         storeLocation: registerDto.storeLocation?.trim() || undefined,
+        storeLocationLatitude: latitude,
+        storeLocationLongitude: longitude,
         status: 'active',
       });
     }
@@ -308,10 +433,20 @@ export class UsersService {
   }> {
     this.logger.log(`Login attempt: ${loginDto.email}`);
 
+||||||| 5ac03ce
+  async login(loginDto: LoginDto, ip?: string): Promise<{ accessToken: string; refreshToken: string; user: UserResponseDto }> {
+    this.logger.log(`Login attempt: ${loginDto.email}`);
+    
+  async login(loginDto: LoginDto, ip?: string): Promise<{ accessToken: string; refreshToken: string; user: UserResponseDto }> {
+    this.logger.log(`Login attempt: ${loginDto.email} (accountType: ${loginDto.accountType})`);
+    
     const user = await this.userModel.findOne({ email: loginDto.email }).exec();
 
     if (!user) {
       this.logger.warn(`Login failed - user not found: ${loginDto.email}`);
+      if (loginDto.accountType === 'merchant') {
+        throw new UnauthorizedException('This email is not registered as a merchant. Please register as a merchant first.');
+      }
       throw new UnauthorizedException('Invalid credentials');
     }
 
@@ -322,6 +457,16 @@ export class UsersService {
     if (!isPasswordValid) {
       this.logger.warn(`Login failed - invalid password: ${loginDto.email}`);
       throw new UnauthorizedException('Invalid credentials');
+    }
+
+    if (loginDto.accountType === 'merchant' && user.accountType !== 'merchant') {
+      this.logger.warn(`Login failed - merchant login attempted with user account: ${loginDto.email}`);
+      throw new UnauthorizedException('This email is not registered as a merchant. Please use the User login or register as a merchant.');
+    }
+
+    if (loginDto.accountType === 'user' && user.accountType === 'merchant') {
+      this.logger.warn(`Login failed - user login attempted with merchant account: ${loginDto.email}`);
+      throw new UnauthorizedException('This email is registered as a merchant. Please use Merchant login to continue.');
     }
 
     if (user.isBanned) {
@@ -335,10 +480,6 @@ export class UsersService {
         // Ban expired, auto-unban
         await this.userModel.findByIdAndUpdate(user._id, { $set: { isBanned: false, banReason: null, banUntil: null } });
       }
-    }
-
-    if (loginDto.accountType === 'merchant' && user.accountType !== 'merchant') {
-      throw new UnauthorizedException('Merchant account not found for this email');
     }
 
     if (user.accountType === 'merchant' && user.role !== UserRole.ADMIN && user.role !== UserRole.MERCHANT) {
@@ -617,6 +758,21 @@ export class UsersService {
             .exec()
         : null;
     return this.toResponseDto(user, merchantProfile);
+||||||| 5ac03ce
+    const merchant = await this.merchantModel.findOne({ userId: user._id.toString() }).lean().exec();
+    if (!merchant) throw new NotFoundException('Merchant profile not found');
+    return merchant;
+    let merchant = await this.merchantModel.findOne({ userId: user._id.toString() }).exec();
+    if (!merchant) {
+      // Auto-create merchant profile to avoid 404s in the frontend
+      merchant = await this.merchantModel.create({
+        userId: user._id.toString(),
+        storeName: user.name || '',
+        storeEmail: user.email || '',
+        status: 'active',
+      });
+    }
+    return merchant.toObject ? merchant.toObject() : merchant;
   }
 
   async getMerchantProfile(userId: string): Promise<any> {
@@ -641,6 +797,13 @@ export class UsersService {
     this.logger.log(`Updating profile for user: ${userId}`);
     this.logger.debug(`Update data received: ${JSON.stringify(updateData)}`);
 
+||||||| 5ac03ce
+    this.logger.debug(`Update data received: ${JSON.stringify(updateData)}`);
+    
+    // Check if email is being changed and if it's already taken
+    this.logger.debug(`Update data received: ${JSON.stringify(updateData).substring(0, 200)}...`);
+    
+    // Check if email is being changed and if it's already taken
     if (updateData.email) {
       this.logger.log(
         `Checking if email ${updateData.email} is already in use`,
@@ -657,6 +820,24 @@ export class UsersService {
       }
     }
 
+||||||| 5ac03ce
+    
+    // Only allow updating specific fields
+    
+    // Validate profile photo size (max 2MB)
+    if (updateData.profilePhoto) {
+      const photoSize = Buffer.byteLength(updateData.profilePhoto, 'utf8');
+      const maxSizeMB = 2;
+      const maxSizeBytes = maxSizeMB * 1024 * 1024;
+      
+      if (photoSize > maxSizeBytes) {
+        this.logger.warn(`Profile photo too large: ${(photoSize / 1024 / 1024).toFixed(2)}MB`);
+        throw new BadRequestException(`Profile photo must be less than ${maxSizeMB}MB. Current size: ${(photoSize / 1024 / 1024).toFixed(2)}MB`);
+      }
+      this.logger.debug(`Profile photo size: ${(photoSize / 1024).toFixed(2)}KB - OK`);
+    }
+    
+    // Only allow updating specific fields
     const allowedUpdates: any = {};
 
     if (updateData.name) allowedUpdates.name = updateData.name;
@@ -675,8 +856,27 @@ export class UsersService {
       allowedUpdates['profile.avatar'] = updateData.profile.avatar;
     if (updateData.profile?.bio)
       allowedUpdates['profile.bio'] = updateData.profile.bio;
+||||||| 5ac03ce
+    if (updateData.profile?.phone) allowedUpdates['profile.phone'] = updateData.profile.phone;
+    if (updateData.profile?.address) allowedUpdates['profile.address'] = updateData.profile.address;
+    if (updateData.profile?.city) allowedUpdates['profile.city'] = updateData.profile.city;
+    if (updateData.profile?.state) allowedUpdates['profile.state'] = updateData.profile.state;
+    if (updateData.profile?.pincode) allowedUpdates['profile.pincode'] = updateData.profile.pincode;
+    if (updateData.profile?.avatar) allowedUpdates['profile.avatar'] = updateData.profile.avatar;
+    if (updateData.profile?.bio) allowedUpdates['profile.bio'] = updateData.profile.bio;
+    if (updateData.profilePhoto) allowedUpdates.profilePhoto = updateData.profilePhoto;
+    if (updateData.profile?.phone) allowedUpdates['profile.phone'] = updateData.profile.phone;
+    if (updateData.profile?.address) allowedUpdates['profile.address'] = updateData.profile.address;
+    if (updateData.profile?.city) allowedUpdates['profile.city'] = updateData.profile.city;
+    if (updateData.profile?.state) allowedUpdates['profile.state'] = updateData.profile.state;
+    if (updateData.profile?.pincode) allowedUpdates['profile.pincode'] = updateData.profile.pincode;
+    if (updateData.profile?.avatar) allowedUpdates['profile.avatar'] = updateData.profile.avatar;
+    if (updateData.profile?.bio) allowedUpdates['profile.bio'] = updateData.profile.bio;
+    if (updateData.profile?.interests && Array.isArray(updateData.profile.interests)) {
+      allowedUpdates['profile.interests'] = updateData.profile.interests;
+    }
 
-    this.logger.debug(`Allowed updates: ${JSON.stringify(allowedUpdates)}`);
+    this.logger.debug(`Updates to apply: ${JSON.stringify(Object.keys(allowedUpdates))}`);
 
     const user = await this.userModel
       .findByIdAndUpdate(
@@ -690,6 +890,9 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
+    this.logger.log(`Profile updated successfully for user: ${userId}`);
+    this.logger.debug(`Updated fields: ${JSON.stringify(Object.keys(allowedUpdates))}`);
+    
     return this.toResponseDto(user);
   }
 
@@ -1434,6 +1637,8 @@ export class UsersService {
         )
         .exec();
 
+      this.ensureOtpMailerReady();
+
       if (!this.mailTransporter || !this.mailFrom) {
         throw new InternalServerErrorException(
           'Email service not configured. Please contact support.',
@@ -1581,6 +1786,69 @@ export class UsersService {
     return this.toResponseDto(updatedUser);
   }
 
+  async changePasswordDirect(userId: string, currentPassword: string, newPassword: string): Promise<UserResponseDto> {
+    this.logger.log(`Changing password directly for user: ${userId}`);
+    
+    if (!currentPassword || !newPassword) {
+      throw new BadRequestException('Current password and new password are required');
+    }
+
+    if (newPassword.length < 6) {
+      throw new BadRequestException('New password must be at least 6 characters long');
+    }
+
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Verify current password
+    const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password);
+    if (!isCurrentPasswordValid) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+
+    // Check if new password is the same as current
+    const isCurrentPassword = await bcrypt.compare(newPassword, user.password);
+    if (isCurrentPassword) {
+      throw new BadRequestException('New password cannot be the same as your current password.');
+    }
+
+    // Check password history
+    const passwordHistory = Array.isArray(user.passwordHistory) ? user.passwordHistory : [];
+    for (const oldPasswordHash of passwordHistory) {
+      const isReusedPassword = await bcrypt.compare(newPassword, oldPasswordHash);
+      if (isReusedPassword) {
+        throw new BadRequestException('Previously used passwords are not allowed. Please choose a different password.');
+      }
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update password
+    const updatedUser = await this.userModel.findByIdAndUpdate(
+      userId,
+      {
+        $set: {
+          password: hashedPassword,
+          updatedAt: new Date(),
+        },
+        $push: {
+          passwordHistory: {
+            $each: [user.password],
+            $slice: -5,
+          },
+        },
+      },
+      { new: true }
+    ).exec();
+
+    this.logger.log(`Password changed successfully for user: ${userId}`);
+
+    return this.toResponseDto(updatedUser);
+  }
+
   // ==================== WISHLIST METHODS ====================
 
   async toggleWishlist(
@@ -1609,6 +1877,15 @@ export class UsersService {
     }
 
     await this.userModel.findByIdAndUpdate(userId, { wishlist }).exec();
+
+    // Persist lifetime like history in DB for merchant analytics.
+    if (added) {
+      try {
+        await this.upsertOfferLikeHistory(userId, user.name || 'Anonymous', adId);
+      } catch (historyError: any) {
+        this.logger.warn(`Failed to store offer lifetime like history: ${historyError?.message || 'unknown error'}`);
+      }
+    }
 
     // Create notification for the ad owner when someone adds to wishlist
     if (added && this.adsService) {
@@ -1660,6 +1937,100 @@ export class UsersService {
     return { wishlist, added };
   }
 
+  private async upsertOfferLikeHistory(
+    userId: string,
+    userName: string,
+    offerId: string,
+    likedProduct?: any,
+  ): Promise<void> {
+    if (!this.offerLikeHistoryModel || !this.offerPromotionModel || !offerId) return;
+
+    const query: any = { requestId: offerId };
+    if (isValidObjectId(offerId)) {
+      query.$or = [{ _id: offerId }, { requestId: offerId }];
+      delete query.requestId;
+    }
+
+    const offer = await this.offerPromotionModel
+      .findOne(query)
+      .select('_id requestId merchantId title category selectedProducts')
+      .lean()
+      .exec();
+
+    if (!offer) return;
+
+    const baseProducts = Array.isArray((offer as any).selectedProducts) ? (offer as any).selectedProducts : [];
+    const mergedProducts = [...baseProducts];
+    if (likedProduct && (likedProduct.productId || likedProduct.id || likedProduct.productName || likedProduct.name)) {
+      const candidateId = String(likedProduct.productId || likedProduct.id || '').trim();
+      const candidateName = String(likedProduct.productName || likedProduct.name || '').trim();
+      const exists = mergedProducts.some((p: any) =>
+        String(p?.productId || p?.id || '').trim() === candidateId ||
+        String(p?.productName || p?.name || '').trim() === candidateName,
+      );
+      if (!exists) {
+        mergedProducts.push({
+          productId: candidateId || candidateName,
+          productName: candidateName || 'Product',
+          name: candidateName || 'Product',
+          category: likedProduct.category || '',
+          imageUrl: likedProduct.imageUrl || likedProduct.image || '',
+          offerPrice: Number(likedProduct.offerPrice || likedProduct.price || 0),
+          originalPrice: Number(likedProduct.originalPrice || 0),
+        });
+      }
+    }
+
+    await this.offerLikeHistoryModel.updateOne(
+      {
+        userId: String(userId),
+        offerPublicId: String((offer as any)._id),
+      },
+      {
+        $setOnInsert: {
+          userId: String(userId),
+          userName: userName || 'Anonymous',
+          merchantId: String((offer as any).merchantId || ''),
+          offerPublicId: String((offer as any)._id),
+          offerRequestId: String((offer as any).requestId || ''),
+          offerTitle: String((offer as any).title || ''),
+          offerCategory: String((offer as any).category || ''),
+          firstLikedAt: new Date(),
+        },
+        $set: {
+          selectedProducts: mergedProducts,
+        },
+      },
+      { upsert: true },
+    ).exec();
+  }
+
+  async likeProduct(
+    userId: string,
+    offerId: string,
+    product: any,
+  ): Promise<{ wishlist: string[]; liked: boolean }> {
+    if (!offerId) {
+      throw new BadRequestException('Offer ID is required to like a product');
+    }
+
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const wishlist = Array.isArray(user.wishlist) ? [...user.wishlist] : [];
+    let liked = false;
+    if (!wishlist.includes(offerId)) {
+      wishlist.push(offerId);
+      await this.userModel.findByIdAndUpdate(userId, { wishlist }).exec();
+      liked = true;
+    }
+
+    await this.upsertOfferLikeHistory(userId, user.name || 'Anonymous', offerId, product);
+    return { wishlist, liked: true };
+  }
+
   async getNotifications(userId: string, page = 1, limit = 20): Promise<{ notifications: any[]; unreadCount: number }> {
     const skip = (page - 1) * limit;
     const [notifications, unreadCount] = await Promise.all([
@@ -1687,6 +2058,10 @@ export class UsersService {
       { recipientId: userId, read: false },
       { $set: { read: true } },
     ).exec();
+  }
+
+  async deleteAllNotifications(userId: string): Promise<void> {
+    await this.notificationModel.deleteMany({ recipientId: userId }).exec();
   }
 
   async saveIWantPreference(
@@ -1856,27 +2231,173 @@ export class UsersService {
     return user.wishlist || [];
   }
 
+  async getMerchantLikedProducts(merchantId: string, limit = 10) {
+    const safeLimit = Math.min(50, Math.max(1, Number(limit) || 10));
+    if (!this.offerLikeHistoryModel) {
+      return { offers: [], products: [] };
+    }
+
+    const likes = await this.offerLikeHistoryModel
+      .find({ merchantId: String(merchantId) })
+      .sort({ firstLikedAt: -1 })
+      .lean()
+      .exec();
+
+    if (!likes.length) {
+      return { offers: [], products: [] };
+    }
+
+    const offerMap = new Map<string, any>();
+    for (const row of likes as any[]) {
+      const offerKey = String(row.offerPublicId || row.offerRequestId || '');
+      if (!offerKey) continue;
+
+      if (!offerMap.has(offerKey)) {
+        offerMap.set(offerKey, {
+          offerId: offerKey,
+          requestId: String(row.offerRequestId || ''),
+          name: String(row.offerTitle || 'Untitled Offer'),
+          type: String(row.offerCategory || 'General'),
+          image: '/images/deal2.avif',
+          likes: 0,
+          customerSet: new Set<string>(),
+          selectedProducts: Array.isArray(row.selectedProducts) ? row.selectedProducts : [],
+        });
+      }
+
+      const offerEntry = offerMap.get(offerKey);
+      offerEntry.likes += 1;
+      if (row.userName) {
+        offerEntry.customerSet.add(String(row.userName));
+      }
+      if ((!offerEntry.selectedProducts || !offerEntry.selectedProducts.length) && Array.isArray(row.selectedProducts)) {
+        offerEntry.selectedProducts = row.selectedProducts;
+      }
+    }
+
+    const offers = Array.from(offerMap.values())
+      .map((item) => {
+        const customers = Array.from(item.customerSet).slice(0, 4);
+        return {
+          offerId: item.offerId,
+          requestId: item.requestId,
+          name: item.name,
+          type: item.type,
+          image: item.image,
+          likes: item.likes,
+          customerCount: item.customerSet.size,
+          customers: customers.join(', '),
+          selectedProducts: item.selectedProducts || [],
+        };
+      })
+      .sort((a, b) => b.likes - a.likes)
+      .slice(0, safeLimit);
+
+    const productMap = new Map<string, any>();
+    for (const offer of offers) {
+      const products = Array.isArray(offer.selectedProducts) ? offer.selectedProducts : [];
+      for (const product of products) {
+        const key = String(product?.productId || product?.id || product?.productName || product?.name || '').trim();
+        if (!key) continue;
+
+        if (!productMap.has(key)) {
+          productMap.set(key, {
+            productId: key,
+            name: String(product?.productName || product?.name || 'Untitled Product'),
+            type: String(product?.category || offer.type || 'General'),
+            image: String(product?.imageUrl || '/images/deal2.avif'),
+            likes: 0,
+            customerSet: new Set<string>(),
+            offerName: offer.name,
+          });
+        }
+
+        const productEntry = productMap.get(key);
+        productEntry.likes += offer.likes;
+        const offerCustomers = offer.customers ? String(offer.customers).split(',').map((name) => name.trim()).filter(Boolean) : [];
+        for (const customer of offerCustomers) {
+          productEntry.customerSet.add(customer);
+        }
+      }
+    }
+
+    const products = Array.from(productMap.values())
+      .map((item) => ({
+        productId: item.productId,
+        name: item.name,
+        type: item.type,
+        image: item.image,
+        likes: item.likes,
+        customerCount: item.customerSet.size,
+        customers: Array.from(item.customerSet).slice(0, 4).join(', '),
+        offerName: item.offerName,
+      }))
+      .sort((a, b) => b.likes - a.likes)
+      .slice(0, safeLimit);
+
+    return { offers, products };
+  }
+
   async getWishlistAds(userId: string): Promise<any[]> {
     const ids = await this.getWishlistIds(userId);
     if (!ids || ids.length === 0) return [];
 
-    if (!this.adsService) {
-      this.logger.error('AdsService not available to fetch wishlist ads');
-      return [];
-    }
+    const ads: any[] = [];
+    const offers: any[] = [];
 
-    const ads = [];
+    // Fetch Ads
     for (const id of ids) {
       try {
-        const ad = await this.adsService.getAdById(id);
-        if (ad) ads.push(ad);
+        const ad = await this.adsService?.getAdById(id);
+        if (ad) {
+          const adData =
+            typeof (ad as any).toObject === 'function' ? (ad as any).toObject() : ad;
+          ads.push({ ...adData, _type: 'ad' });
+        }
       } catch (error) {
         this.logger.warn(
           `Ad ${id} not found in wishlist context: ${error.message}`,
         );
+||||||| 5ac03ce
+        this.logger.warn(`Ad ${id} not found in wishlist context: ${error.message}`);
+        // Not an ad ID, try offer next
       }
     }
-    return ads;
+
+    // Fetch Offers (OfferPromotion) for IDs not found as Ads
+    const foundAdIds = new Set(
+      ads.flatMap(ad => [String(ad._id), String(ad.adId)].filter(Boolean)),
+    );
+    const remainingIds = ids.filter(id => !foundAdIds.has(id));
+    for (const id of remainingIds) {
+      try {
+        const offer = await this.offerPromotionModel?.findById(id).lean().exec();
+        if (offer) {
+          offers.push({
+            ...offer,
+            _type: 'offer',
+            adId: String(offer._id),
+            title: offer.title,
+            price: offer.totalPrice,
+            images: offer.imageUrl ? [offer.imageUrl] : [],
+            category: offer.category,
+            merchant: {
+              name: offer.merchantName,
+            },
+          });
+        }
+      } catch (error) {
+        this.logger.warn(`Offer ${id} not found in wishlist context: ${error.message}`);
+      }
+    }
+
+    // Combine and sort by createdAt descending (newest first)
+    const combined = [...ads, ...offers].sort(
+      (a, b) =>
+        new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime(),
+    );
+
+    return combined;
   }
 
   // ==================== USER REPORT METHODS ====================
@@ -2332,6 +2853,14 @@ export class UsersService {
           ? UserRole.MERCHANT
           : user.role || UserRole.USER;
 
+||||||| 5ac03ce
+    // Loyalty tier logic
+    const points = user.loyaltyPoints || 0;
+    let loyaltyTier = 'Bronze';
+    if (points >= 20000) loyaltyTier = 'Platinum';
+    else if (points >= 5000) loyaltyTier = 'Gold';
+    else if (points >= 1000) loyaltyTier = 'Silver';
+
     return {
       id: user._id.toString(),
       name: user.name,
@@ -2342,9 +2871,13 @@ export class UsersService {
       banReason: user.banReason,
       isEmailVerified: user.isEmailVerified || false,
       profile: user.profile || {},
+      profilePhoto: user.profilePhoto || null,
       merchantProfile,
       iWantPreference: user.iWantPreference || null,
       createdAt: user.createdAt,
+      loyaltyPoints: user.loyaltyPoints || 0,
+      merchantLoyaltyPoints: user.merchantLoyaltyPoints || {},
+      loyaltyTier,
     };
   }
 }

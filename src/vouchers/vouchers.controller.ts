@@ -71,6 +71,11 @@ export class VouchersController {
     );
   }
 
+  @Get('public/:voucherId/status')
+  async getPublicVoucherStatus(@Param('voucherId') voucherId: string) {
+    return await this.vouchersService.getPublicVoucherStatus(voucherId);
+  }
+
   /**
    * GET /vouchers/:voucherId
    * Get single voucher details by ID
@@ -190,14 +195,14 @@ export class VouchersController {
     @Param('voucherId') voucherId: string,
     @CurrentUser() user: any,
   ) {
-    const userId = user?.id || user?._id;
-    if (!userId) {
-      throw new BadRequestException('User ID not found');
+    const merchantId = user?.id || user?._id;
+    if (!merchantId) {
+      throw new BadRequestException('Merchant ID not found');
     }
 
     return await this.vouchersService.generateVerificationCodeForVoucher(
       voucherId,
-      userId,
+      merchantId,
     );
   }
 

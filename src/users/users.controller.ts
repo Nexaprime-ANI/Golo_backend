@@ -452,11 +452,51 @@ export class UsersController {
     };
   }
 
+  // Save pending merchant location (used when frontend couldn't submit coords during register)
+  @Post('pending-location')
+  async savePendingMerchantLocation(@Body() body: { email: string; address: string; latitude: number; longitude: number }) {
+    const res = await this.usersService.savePendingMerchantLocation(body);
+    return { success: true, data: res };
+  }
+
+  // Sync pending merchant location into merchant profile after login
+  @Post('pending-location/sync')
+  @UseGuards(JwtAuthGuard)
+  async syncPendingMerchantLocation(@CurrentUser() user: any) {
+    const res = await this.usersService.syncPendingMerchantLocation(user.id, user.email);
+    return { success: true, data: res };
+  }
+
   @Put('profile')
   @UseGuards(JwtAuthGuard)
   async updateProfile(@CurrentUser() user: any, @Body() data: any) {
-    const profile = await this.usersService.updateProfile(user.id, data);
-    return { success: true, message: 'Profile updated successfully', data: profile };
+    try {
+      console.log(`[Controller] Updating profile for user ${user.id} with data:`, {
+        hasName: !!data.name,
+        hasEmail: !!data.email,
+        hasProfilePhoto: !!data.profilePhoto,
+        photoSize: data.profilePhoto ? 
+          (Buffer.byteLength(data.profilePhoto, 'utf8') / 1024 / 1024).toFixed(2) + "MB" : 
+          "N/A",
+        hasInterests: !!data.profile?.interests,
+      });
+      
+      const profile = await this.usersService.updateProfile(user.id, data);
+      
+      console.log(`[Controller] Profile updated successfully:`, {
+        hasPhoto: !!profile.profilePhoto,
+        interests: profile.profile?.interests?.length || 0,
+      });
+      
+      return { 
+        success: true, 
+        message: 'Profile updated successfully', 
+        data: profile 
+      };
+    } catch (error) {
+      console.error(`[Controller] Error updating profile:`, error.message);
+      throw error;
+    }
   }
 
   // ==================== PASSWORD OTP ====================
@@ -533,6 +573,13 @@ export class UsersController {
       body.newPassword,
     );
     return { success: true, message: 'Password changed', data: result };
+  }
+
+  @Post('change-password')
+  @UseGuards(JwtAuthGuard)
+  async changePasswordDirect(@CurrentUser() user: any, @Body() body: { currentPassword: string; newPassword: string }) {
+    const result = await this.usersService.changePasswordDirect(user.id, body.currentPassword, body.newPassword);
+    return { success: true, message: 'Password changed successfully', data: result };
   }
 
   // ==================== WISHLIST ====================
@@ -707,6 +754,27 @@ async debugCheckUser(@Param('id') id: string) {
     };
   }
 
+  @Post('likes/product')
+  @UseGuards(JwtAuthGuard)
+  async likeProduct(
+    @CurrentUser() user: any,
+    @Body() body: { offerId: string; product?: any },
+  ) {
+    return {
+      success: true,
+      data: await this.usersService.likeProduct(user.id, body?.offerId, body?.product || null),
+    };
+  }
+
+  @Get('merchant/liked-products')
+  @UseGuards(JwtAuthGuard)
+  async getMerchantLikedProducts(@CurrentUser() user: any, @Query('limit') limit?: string) {
+    return {
+      success: true,
+      data: await this.usersService.getMerchantLikedProducts(user.id, limit ? Number(limit) : 10),
+    };
+  }
+
   // ==================== NOTIFICATIONS ====================
   @Get('notifications')
   @UseGuards(JwtAuthGuard)
@@ -715,6 +783,30 @@ async debugCheckUser(@Param('id') id: string) {
       success: true,
       data: await this.usersService.getNotifications(user.id),
     };
+  }
+
+  @Post('notifications/:notificationId/read')
+  @UseGuards(JwtAuthGuard)
+  async markNotificationRead(
+    @CurrentUser() user: any,
+    @Param('notificationId') notificationId: string,
+  ) {
+    await this.usersService.markNotificationRead(notificationId, user.id);
+    return { success: true };
+  }
+
+  @Post('notifications/read-all')
+  @UseGuards(JwtAuthGuard)
+  async markAllNotificationsRead(@CurrentUser() user: any) {
+    await this.usersService.markAllNotificationsRead(user.id);
+    return { success: true };
+  }
+
+  @Delete('notifications')
+  @UseGuards(JwtAuthGuard)
+  async deleteAllNotifications(@CurrentUser() user: any) {
+    await this.usersService.deleteAllNotifications(user.id);
+    return { success: true };
   }
 
   // ==================== ADMIN ====================
@@ -741,7 +833,6 @@ async debugCheckUser(@Param('id') id: string) {
 
   // ==================== DYNAMIC ====================
   @Get(':id')
-  @UseGuards(JwtAuthGuard)
   async getUser(@Param('id') id: string) {
     return { success: true, data: await this.usersService.getUserById(id) };
 ||||||| C:\Users\ADMIN\AppData\Local\Temp\merge_base.tmp

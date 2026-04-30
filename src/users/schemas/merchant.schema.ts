@@ -29,8 +29,41 @@ export class Merchant {
   @Prop()
   storeLocation?: string;
 
+  @Prop({ type: Number })
+  storeLocationLatitude?: number;
+
+  @Prop({ type: Number })
+  storeLocationLongitude?: number;
+
+  @Prop({ type: Object, default: null })
+  offerTemplate?: any;
+
+  @Prop({ type: [String], default: [] })
+  offerPromotionIds?: string[];
+
+  @Prop({ default: false })
+  nearbyOffersPrimaryUnsupported?: boolean;
+
+  @Prop()
+  profilePhoto?: string;
+
+  @Prop()
+  shopPhoto?: string;
+
   @Prop({ default: 'active' })
   status: 'active' | 'inactive';
+
+  @Prop({ default: true })
+  emailNotifications?: boolean;
+
+  @Prop({ default: true })
+  orderNotifications?: boolean;
+
+  @Prop({ default: true })
+  promotionNotifications?: boolean;
+
+  @Prop({ default: true })
+  pushNotifications?: boolean;
 
   @Prop()
   createdAt: Date;

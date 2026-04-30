@@ -1,4 +1,4 @@
-import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+﻿import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 
 export type NotificationDocument = Notification & Document;
@@ -25,6 +25,9 @@ export class Notification {
     enum: ['wishlist_add', 'wishlist_remove'],
     default: 'wishlist_add',
   })
+||||||| 5ac03ce
+  @Prop({ required: true, enum: ['wishlist_add', 'wishlist_remove'], default: 'wishlist_add' })
+  @Prop({ required: true, enum: ['wishlist_add', 'wishlist_remove', 'order_placed', 'order_accepted', 'order_rejected', 'admin_warning'], default: 'wishlist_add' })
   type: string;
 
   @Prop({ required: true })

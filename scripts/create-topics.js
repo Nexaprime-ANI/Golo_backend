@@ -151,6 +151,37 @@ const topics = [
   'audit.log.create',
   'audit.log.list',
   'audit.log.created'
+||||||| 5ac03ce
+  'audit.log.created'
+  'audit.log.created',
+
+  // Voucher command/event topics
+  'voucher.claim',
+  'voucher.get.my',
+  'voucher.get.by.id',
+  'voucher.verify',
+  'voucher.redeem',
+  'voucher.generate.code',
+  'voucher.claimed',
+  'voucher.verified',
+  'voucher.redeemed',
+  'voucher.shared',
+
+  // Orders command/event topics
+  'order.get.merchant',
+  'order.get.stats',
+  'order.update.status',
+  'order.status.updated',
+
+  // Reviews command/event topics
+  'review.get.merchant',
+  'review.get.stats',
+  'review.update.status',
+  'review.status.updated',
+
+  // Merchant dashboard command/event topics
+  'merchant.dashboard.summary',
+  'merchant.dashboard.summary.generated'
 ];
 
 async function createTopics() {

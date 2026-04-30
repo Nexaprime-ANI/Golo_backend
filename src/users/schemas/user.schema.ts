@@ -1,4 +1,4 @@
-import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+﻿import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 
 export type UserDocument = User & Document;
@@ -24,6 +24,14 @@ export class User {
   @Prop({ type: [String], default: [] })
   passwordHistory: string[];
 
+  // Total loyalty points earned by the user
+  @Prop({ default: 0 })
+  loyaltyPoints: number;
+
+  // Per-merchant loyalty points: { merchantId: points }
+  @Prop({ type: Object, default: {} })
+  merchantLoyaltyPoints: { [merchantId: string]: number };
+
   @Prop({ required: true, enum: UserRole, default: UserRole.USER })
   role: UserRole;
 
@@ -46,6 +54,12 @@ export class User {
       avatar: String,
       bio: String,
     },
+||||||| 5ac03ce
+      bio: String
+    }
+      bio: String,
+      interests: [String]
+    }
   })
   profile: {
     phone?: string;
@@ -55,7 +69,11 @@ export class User {
     pincode?: string;
     avatar?: string;
     bio?: string;
+    interests?: string[];
   };
+
+  @Prop({ type: String })
+  profilePhoto?: string;
 
   @Prop({ type: Object })
   metadata: {

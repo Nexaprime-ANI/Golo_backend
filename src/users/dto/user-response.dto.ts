@@ -10,6 +10,7 @@
   banReason?: string;
   isEmailVerified: boolean;
   profile?: any;
+  profilePhoto?: string | null;
   merchantProfile?: any;
   iWantPreference?: {
     category?: string;
@@ -19,6 +20,14 @@
     updatedAt?: Date;
   } | null;
   createdAt: Date;
+
+||||||| 5ac03ce
+  
+
+  // Loyalty fields
+  loyaltyPoints?: number;
+  merchantLoyaltyPoints?: { [merchantId: string]: number };
+  loyaltyTier?: string;
 
   constructor(partial: Partial<UserResponseDto>) {
     Object.assign(this, partial);
