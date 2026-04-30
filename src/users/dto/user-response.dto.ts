@@ -1,9 +1,11 @@
-export class UserResponseDto {
+﻿export class UserResponseDto {
   id: string;
   name: string;
   email: string;
   role: string;
   accountType: 'user' | 'merchant';
+||||||| C:\Users\ADMIN\AppData\Local\Temp\merge_base.tmp
+  accountType?: 'user' | 'merchant';
   isBanned?: boolean;
   banReason?: string;
   isEmailVerified: boolean;

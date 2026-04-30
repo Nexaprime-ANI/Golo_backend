@@ -1,4 +1,4 @@
-// ...existing code...
+﻿// ...existing code...
 import {
   Injectable,
   Logger,
@@ -36,6 +36,272 @@ export class AdsService implements OnModuleInit, OnModuleDestroy {
    * Get a single report by reportId
    */
   async getReportByReportId(reportId: string): Promise<Record<string, unknown> | null> {
+    try {
+      this.logger.log(`Fetching enriched report for reportId: ${reportId}`);
+      const results = await this.reportModel.aggregate([
+        { $match: { reportId } },
+        {
+          $lookup: {
+            from: 'ads',
+            localField: 'adId',
+            foreignField: 'adId',
+            as: 'ad',
+          },
+        },
+        { $unwind: { path: '$ad', preserveNullAndEmptyArrays: true } },
+        {
+          $addFields: {
+            adUserObjectId: {
+              $cond: [
+                {
+                  $regexMatch: {
+                    input: '$ad.userId',
+                    regex: /^[0-9a-fA-F]{24}$/,
+                  },
+                },
+                { $toObjectId: '$ad.userId' },
+                null,
+              ],
+            },
+            adUserIdString: '$ad.userId',
+          },
+        },
+        {
+          $lookup: {
+            from: 'users',
+            let: { adUserObjectId: '$adUserObjectId' },
+            pipeline: [
+              { $match: { $expr: { $eq: ['$_id', '$$adUserObjectId'] } } },
+            ],
+            as: 'uploader',
+          },
+        },
+        { $unwind: { path: '$uploader', preserveNullAndEmptyArrays: true } },
+        // Always set uploader.userId from uploader._id if uploader exists
+        {
+          $addFields: {
+            'uploader.userId': {
+              $cond: [
+                { $ifNull: ['$uploader._id', false] },
+                { $toString: '$uploader._id' },
+                '$uploader.userId',
+              ],
+            },
+          },
+        },
+        {
+          $lookup: {
+            from: 'ads',
+            let: { uploaderUserId: '$uploader._id' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $and: [
+                      { $eq: [{ $toObjectId: '$userId' }, '$$uploaderUserId'] },
+                      { $eq: ['$status', 'active'] },
+                    ],
+                  },
+                },
+              },
+            ],
+            as: 'uploaderActiveAds',
+          },
+        },
+        {
+          $addFields: {
+            uploader: {
+              $cond: [
+                { $ifNull: ['$uploader.userId', false] },
+                '$uploader',
+                {
+                  $cond: [
+                    {
+                      $and: [
+                        { $ifNull: ['$adUserIdString', false] },
+                        {
+                          $regexMatch: {
+                            input: '$adUserIdString',
+                            regex: /^[0-9a-fA-F]{24}$/,
+                          },
+                        },
+                      ],
+                    },
+                    {
+                      $let: {
+                        vars: {
+                          fallbackUserId: { $toObjectId: '$adUserIdString' },
+                        },
+                        in: {
+                          $mergeObjects: [
+                            {
+                              name: 'No user info',
+                              accountType: '-',
+                              role: '-',
+                              email: '-',
+                              userId: '$adUserIdString',
+                            },
+                            {
+                              $arrayElemAt: [
+                                {
+                                  $map: {
+                                    input: {
+                                      $filter: {
+                                        input: '$$ROOT',
+                                        as: 'root',
+                                        cond: {
+                                          $eq: [
+                                            '$$root._id',
+                                            '$$fallbackUserId',
+                                          ],
+                                        },
+                                      },
+                                    },
+                                    as: 'user',
+                                    in: {
+                                      name: '$$user.name',
+                                      accountType: '$$user.accountType',
+                                      role: '$$user.role',
+                                      email: '$$user.email',
+                                      userId: { $toString: '$$user._id' },
+                                    },
+                                  },
+                                },
+                                0,
+                              ],
+                            },
+                          ],
+                        },
+                      },
+                    },
+                    {
+                      name: 'No user info',
+                      accountType: '-',
+                      role: '-',
+                      email: '-',
+                      userId: '-',
+                    },
+                  ],
+                },
+              ],
+            },
+            uploaderListingCount: {
+              $size: { $ifNull: ['$uploaderActiveAds', []] },
+            },
+          },
+        },
+        {
+          $project: {
+            reportId: 1,
+            adId: 1,
+            reportedBy: 1,
+            reason: 1,
+            description: 1,
+            status: 1,
+            adminNotes: 1,
+            createdAt: 1,
+            reviewedAt: 1,
+            // Ad details
+            'ad.title': 1,
+            'ad.price': 1,
+            'ad.category': 1,
+            'ad.subCategory': 1,
+            'ad.images': 1,
+            'ad.status': 1,
+            'ad.reportCount': 1,
+            'ad.userId': 1,
+            // Uploader details
+            'uploader.name': 1,
+            'uploader.accountType': 1,
+            'uploader.role': 1,
+            'uploader.email': 1,
+            'uploader.userId': 1,
+            uploaderListingCount: 1,
+          },
+        },
+      ]);
+      const result = results[0] || null;
+      // Always ensure uploader.userId is present if uploader exists
+      if (
+        result &&
+        result.uploader &&
+        !result.uploader.userId &&
+        result.uploader.email
+      ) {
+        if (result.ad?.userId) {
+          // Try to use ad.userId if uploader is the ad owner
+          result.uploader.userId = result.ad.userId;
+        } else if (result.uploader._id) {
+          // Fallback: use uploader._id if present
+          result.uploader.userId = result.uploader._id.toString();
+        }
+      }
+      // FINAL fallback: if uploader.userId is missing or '-', try direct query
+      if (
+        result &&
+        (!result.uploader?.userId ||
+          result.uploader.userId === '-' ||
+          result.uploader.name === 'No user info')
+      ) {
+        // Try to fetch user by ad.userId directly
+        const adUserId =
+          result.ad?.userId ? result.ad.userId : null;
+        if (adUserId && /^[0-9a-fA-F]{24}$/.test(adUserId)) {
+          const userDoc = await this.userModel.findById(adUserId).lean();
+          if (userDoc) {
+            result.uploader = {
+              name: userDoc.name,
+              accountType: userDoc.accountType,
+              role: userDoc.role,
+              email: userDoc.email,
+              userId: userDoc._id.toString(),
+            };
+          }
+        }
+      }
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error fetching enriched report: ${message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Get real-time report stats for admin panel cards
+   */
+  public async getReportStats() {
+    const [
+      total,
+      pending,
+      reviewed,
+      actionTaken,
+      policyViolations,
+      resolved24h,
+    ] = await Promise.all([
+      this.reportModel.countDocuments(),
+      this.reportModel.countDocuments({ status: 'pending' }),
+      this.reportModel.countDocuments({ status: 'reviewed' }),
+      this.reportModel.countDocuments({ status: 'action_taken' }),
+      this.reportModel.countDocuments({ reason: 'policy_violation' }),
+      this.reportModel.countDocuments({
+        status: 'action_taken',
+        reviewedAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+      }),
+    ]);
+    return {
+      total,
+      pending,
+      reviewed,
+      actionTaken,
+      policyViolations,
+      resolved24h,
+    };
+  }
+||||||| C:\Users\ADMIN\AppData\Local\Temp\merge_base.tmp
+  /**
+   * Get a single report by reportId, wit  async getReportByReportId(
+    re  async getReportByReportId(reportId: string): Promise<Record<string, unknown> | null> {
     try {
       this.logger.log(`Fetching enriched report for reportId: ${reportId}`);
       const results = await this.reportModel.aggregate([

@@ -1,4 +1,4 @@
-import { Logger, Module } from '@nestjs/common';
+﻿import { Logger, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import configuration from './config/configuration';
@@ -64,6 +64,8 @@ const logger = new Logger('MongoDB');
     MerchantProductsModule,
     BannersModule,
     VouchersModule,
+||||||| C:\Users\ADMIN\AppData\Local\Temp\merge_base.tmp
+    AnalyticsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

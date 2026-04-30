@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   Injectable,
   InternalServerErrorException,
@@ -76,6 +76,11 @@ export class PaymentsService implements OnModuleInit {
   async onModuleInit() {
     if (this.kafkaService) {
       this.logger.log('Kafka service connected for PaymentsService');
+||||||| C:\Users\ADMIN\AppData\Local\Temp\merge_base.tmp
+      this.logger.warn('Razorpay keys missing. Payment endpoints will not be functional.');
+      this.logger.warn(
+        'Razorpay keys missing. Payment endpoints will not be functional.',
+      );
     }
   }
 

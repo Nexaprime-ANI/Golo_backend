@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+﻿import { Controller, Get } from '@nestjs/common';
 import { AnalyticsService } from './analytics.service';
 import { RedisService } from '../common/services/redis.service';
 
@@ -70,3 +70,4 @@ export class AnalyticsController {
     return { success: true, data };
   }
 }
+

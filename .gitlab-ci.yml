@@ -9,6 +9,12 @@ stages:
 
 variables:
   NPM_CACHE_DIR: "$CI_PROJECT_DIR/.npm"
+  RUN_ONLY_SONAR: "true"   # 🔥 toggle here
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 
 # workflow:
 #   rules:
